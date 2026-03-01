@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "Analista Web AI Pro",
+  "version": "4.0",
+  "description": "Analiza el DOM y chatea con la estructura usando OpenRouter.",
+  "permissions": ["sidePanel", "scripting", "activeTab", "storage"],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Abrir Analista"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ]
+}

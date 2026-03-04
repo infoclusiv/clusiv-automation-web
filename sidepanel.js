@@ -9,6 +9,8 @@ const consoleLog = document.getElementById('consoleLog');
 const chatBox = document.getElementById('chatBox');
 const chatInput = document.getElementById('chatInput');
 const btnSend = document.getElementById('btnSend');
+const searchInput = document.getElementById('searchInput');
+const searchBar = document.getElementById('searchBar');
 
 let lastAnalysisData = null;
 let chatHistory = [];
@@ -35,6 +37,8 @@ btnConfig.addEventListener('click', () => {
 btnLimpiar.addEventListener('click', () => {
     consoleLog.innerHTML = '<div style="padding:40px; text-align:center; color:#999">Lista vacía.</div>';
     lastAnalysisData = null;
+    searchBar.style.display = 'none';
+    searchInput.value = '';
 });
 
 // --- PESTAÑAS ---
@@ -81,6 +85,8 @@ chrome.runtime.onMessage.addListener((request) => {
 
 function renderMap(map) {
     consoleLog.innerHTML = "";
+    searchBar.style.display = 'block';
+    searchInput.value = '';
     for (const [context, elements] of Object.entries(map)) {
         const section = document.createElement('div');
         section.className = 'section-header';
@@ -122,13 +128,13 @@ async function handleSendMessage() {
 
     addUserMessage(text);
     chatInput.value = "";
-    
+
     const loadingId = addAiMessage("⏳ Procesando...");
     const aiResponse = await callOpenRouter(text);
-    
+
     const msgDiv = document.getElementById(loadingId);
-    if(msgDiv) msgDiv.innerText = aiResponse;
-    
+    if (msgDiv) msgDiv.innerText = aiResponse;
+
     chatHistory.push({ role: "user", content: text }, { role: "assistant", content: aiResponse });
 }
 
@@ -180,4 +186,30 @@ function addAiMessage(text) {
 }
 
 btnSend.addEventListener('click', handleSendMessage);
-chatInput.addEventListener('keypress', (e) => { if(e.key === 'Enter') handleSendMessage(); });
+chatInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') handleSendMessage(); });
+
+// --- BÚSQUEDA ---
+searchInput.addEventListener('input', () => {
+    const query = searchInput.value.toLowerCase().trim();
+    const items = consoleLog.querySelectorAll('.item');
+    const sections = consoleLog.querySelectorAll('.section-header');
+
+    items.forEach(item => {
+        const text = item.textContent.toLowerCase();
+        item.style.display = text.includes(query) ? '' : 'none';
+    });
+
+    // Hide section headers that have no visible items
+    sections.forEach(section => {
+        let next = section.nextElementSibling;
+        let hasVisible = false;
+        while (next && !next.classList.contains('section-header')) {
+            if (next.classList.contains('item') && next.style.display !== 'none') {
+                hasVisible = true;
+                break;
+            }
+            next = next.nextElementSibling;
+        }
+        section.style.display = hasVisible ? '' : 'none';
+    });
+});

@@ -12,8 +12,25 @@ const btnSend = document.getElementById('btnSend');
 const searchInput = document.getElementById('searchInput');
 const searchBar = document.getElementById('searchBar');
 
+// --- RECORDING / PLAYBACK REFS ---
+const btnRecord = document.getElementById('btnRecord');
+const recordingBar = document.getElementById('recordingBar');
+const recStepCount = document.getElementById('recStepCount');
+const journeysList = document.getElementById('journeysList');
+const playbackOverlay = document.getElementById('playbackOverlay');
+const playbackStepLabel = document.getElementById('playbackStepLabel');
+const btnStopPlayback = document.getElementById('btnStopPlayback');
+
 let lastAnalysisData = null;
 let chatHistory = [];
+
+// --- RECORDING STATE ---
+let isRecording = false;
+let recordedSteps = [];
+let savedJourneys = [];
+let isPlaying = false;
+let stopPlaybackFlag = false;
+const PLAYBACK_DELAY_MS = 1000;
 
 // --- CONFIGURACIÓN ---
 chrome.storage.local.get(['apiKey', 'modelId'], (res) => {
@@ -44,12 +61,16 @@ btnLimpiar.addEventListener('click', () => {
 // --- PESTAÑAS ---
 document.getElementById('tabLogs').addEventListener('click', () => switchTab('logs'));
 document.getElementById('tabChat').addEventListener('click', () => switchTab('chat'));
+document.getElementById('tabJourneys').addEventListener('click', () => switchTab('journeys'));
 
 function switchTab(target) {
     document.getElementById('tabLogs').classList.toggle('active', target === 'logs');
     document.getElementById('tabChat').classList.toggle('active', target === 'chat');
+    document.getElementById('tabJourneys').classList.toggle('active', target === 'journeys');
     document.getElementById('viewLogs').classList.toggle('active', target === 'logs');
     document.getElementById('viewChat').classList.toggle('active', target === 'chat');
+    document.getElementById('viewJourneys').classList.toggle('active', target === 'journeys');
+    if (target === 'journeys') renderJourneys();
 }
 
 // --- ESCANEO Y AUTO-UPDATE ---
@@ -81,11 +102,17 @@ chrome.runtime.onMessage.addListener((request) => {
         lastAnalysisData = request.map;
         renderMap(request.map);
     }
+    if (request.action === "RECORD_USER_ACTION" && isRecording) {
+        const { aiRef, text, selector } = request.data;
+        recordedSteps.push({ aiRef, text, selector });
+        updateRecStepCount();
+    }
 });
 
 function renderMap(map) {
     consoleLog.innerHTML = "";
     searchBar.style.display = 'block';
+    recordingBar.classList.add('active');
     searchInput.value = '';
     for (const [context, elements] of Object.entries(map)) {
         const section = document.createElement('div');
@@ -101,7 +128,7 @@ function renderMap(map) {
                     <b>${el.text || 'Sin texto'}</b>
                     <span class="selector">${el.tagName}${el.selector}</span>
                 </div>
-                <button class="btn-run" data-id="${el.aiRef}" title="Ejecutar Clic">▶</button>
+                <button class="btn-run" data-id="${el.aiRef}" data-text="${(el.text || 'Sin texto').replace(/"/g, '&quot;')}" data-selector="${(el.selector || '').replace(/"/g, '&quot;')}" title="Ejecutar Clic">▶</button>
             `;
             consoleLog.appendChild(div);
         });
@@ -111,11 +138,19 @@ function renderMap(map) {
     document.querySelectorAll('.btn-run').forEach(btn => {
         btn.addEventListener('click', async (e) => {
             const id = e.currentTarget.getAttribute('data-id');
+            const text = e.currentTarget.getAttribute('data-text');
+            const selector = e.currentTarget.getAttribute('data-selector');
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
             if (tab) {
                 chrome.tabs.sendMessage(tab.id, { action: "SIMULATE_CLICK", id });
                 e.currentTarget.style.backgroundColor = "#3498db";
                 setTimeout(() => e.currentTarget.style.backgroundColor = "#27ae60", 500);
+
+                // --- RECORDING: capturar paso ---
+                if (isRecording) {
+                    recordedSteps.push({ aiRef: id, text, selector });
+                    updateRecStepCount();
+                }
             }
         });
     });
@@ -212,4 +247,177 @@ searchInput.addEventListener('input', () => {
         }
         section.style.display = hasVisible ? '' : 'none';
     });
+});
+
+// --- RECORDING CONTROLS ---
+function updateRecStepCount() {
+    recStepCount.textContent = `${recordedSteps.length} paso${recordedSteps.length !== 1 ? 's' : ''}`;
+    recStepCount.classList.toggle('has-steps', recordedSteps.length > 0);
+}
+
+async function startRecording() {
+    isRecording = true;
+    recordedSteps = [];
+    updateRecStepCount();
+    btnRecord.textContent = '⏹ Detener';
+    btnRecord.classList.add('recording');
+    recordingBar.classList.add('is-recording');
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab) {
+        chrome.tabs.sendMessage(tab.id, { action: "START_RECORDING" }).catch(() => {});
+    }
+}
+
+async function stopRecording() {
+    isRecording = false;
+    btnRecord.textContent = '⏺ Grabar';
+    btnRecord.classList.remove('recording');
+    recordingBar.classList.remove('is-recording');
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab) {
+        chrome.tabs.sendMessage(tab.id, { action: "STOP_RECORDING" }).catch(() => {});
+    }
+
+    if (recordedSteps.length === 0) {
+        alert('No se grabaron pasos.');
+        return;
+    }
+
+    const name = prompt(`Guardar secuencia (${recordedSteps.length} pasos).\nIngresa un nombre:`);
+    if (!name || !name.trim()) {
+        alert('Grabación descartada.');
+        recordedSteps = [];
+        updateRecStepCount();
+        return;
+    }
+
+    const journey = {
+        id: 'j-' + Date.now(),
+        name: name.trim(),
+        steps: [...recordedSteps],
+        createdAt: new Date().toLocaleString()
+    };
+    savedJourneys.push(journey);
+    saveJourneys();
+    recordedSteps = [];
+    updateRecStepCount();
+    alert(`✅ Secuencia "${journey.name}" guardada con ${journey.steps.length} pasos.`);
+}
+
+btnRecord.addEventListener('click', () => {
+    if (isRecording) {
+        stopRecording();
+    } else {
+        startRecording();
+    }
+});
+
+// --- JOURNEY PERSISTENCE ---
+function loadJourneys() {
+    chrome.storage.local.get(['savedJourneys'], (res) => {
+        savedJourneys = res.savedJourneys || [];
+    });
+}
+
+function saveJourneys() {
+    chrome.storage.local.set({ savedJourneys });
+}
+
+loadJourneys();
+
+// --- RENDER JOURNEYS LIST ---
+function renderJourneys() {
+    journeysList.innerHTML = '';
+    if (savedJourneys.length === 0) {
+        journeysList.innerHTML = '<div class="journey-empty">No hay secuencias guardadas.</div>';
+        return;
+    }
+    savedJourneys.forEach((journey, index) => {
+        const div = document.createElement('div');
+        div.className = 'journey-item';
+        div.innerHTML = `
+            <div class="journey-info">
+                <b>${journey.name}</b>
+                <span>${journey.steps.length} pasos · ${journey.createdAt}</span>
+            </div>
+            <div class="journey-actions">
+                <button class="btn-play-journey" data-index="${index}" title="Reproducir">▶</button>
+                <button class="btn-delete-journey" data-index="${index}" title="Eliminar">🗑</button>
+            </div>
+        `;
+        journeysList.appendChild(div);
+    });
+
+    // Play buttons
+    journeysList.querySelectorAll('.btn-play-journey').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const idx = parseInt(btn.getAttribute('data-index'));
+            playJourney(savedJourneys[idx]);
+        });
+    });
+
+    // Delete buttons
+    journeysList.querySelectorAll('.btn-delete-journey').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const idx = parseInt(btn.getAttribute('data-index'));
+            const name = savedJourneys[idx].name;
+            if (confirm(`¿Eliminar la secuencia "${name}"?`)) {
+                savedJourneys.splice(idx, 1);
+                saveJourneys();
+                renderJourneys();
+            }
+        });
+    });
+}
+
+// --- PLAYBACK ---
+async function playJourney(journey) {
+    if (isPlaying) {
+        alert('Ya se está reproduciendo una secuencia.');
+        return;
+    }
+    isPlaying = true;
+    stopPlaybackFlag = false;
+    playbackOverlay.classList.add('active');
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) {
+        playbackOverlay.classList.remove('active');
+        isPlaying = false;
+        return;
+    }
+
+    for (let i = 0; i < journey.steps.length; i++) {
+        if (stopPlaybackFlag) break;
+
+        const step = journey.steps[i];
+        playbackStepLabel.textContent = `Paso ${i + 1}/${journey.steps.length}: ${step.text}`;
+
+        try {
+            await chrome.tabs.sendMessage(tab.id, { 
+                action: "SIMULATE_CLICK", 
+                id: step.aiRef,
+                selector: step.selector,
+                text: step.text 
+            });
+        } catch (e) {
+            playbackStepLabel.textContent = `⚠️ Error en paso ${i + 1}: elemento no encontrado`;
+        }
+
+        if (i < journey.steps.length - 1 && !stopPlaybackFlag) {
+            await new Promise(resolve => setTimeout(resolve, PLAYBACK_DELAY_MS));
+        }
+    }
+
+    playbackOverlay.classList.remove('active');
+    isPlaying = false;
+    if (!stopPlaybackFlag) {
+        alert(`✅ Secuencia "${journey.name}" completada.`);
+    }
+}
+
+btnStopPlayback.addEventListener('click', () => {
+    stopPlaybackFlag = true;
 });

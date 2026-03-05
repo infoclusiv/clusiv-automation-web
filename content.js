@@ -1,5 +1,6 @@
 // content.js
 let autoScanActive = false;
+let isRecordingMode = false;
 let domObserver = null;
 let debounceTimer = null;
 
@@ -34,8 +35,37 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         stopObserver();
         sendResponse({ status: "auto_scan_stopped" });
     }
+    if (request.action === "START_RECORDING") {
+        isRecordingMode = true;
+        sendResponse({ status: "recording_started" });
+    }
+    if (request.action === "STOP_RECORDING") {
+        isRecordingMode = false;
+        sendResponse({ status: "recording_stopped" });
+    }
     if (request.action === "SIMULATE_CLICK") {
-        const element = document.querySelector(`[data-ai-ref="${request.id}"]`);
+        let element = document.querySelector(`[data-ai-ref="${request.id}"]`);
+
+        // Fallback 1: Selector
+        if (!element && request.selector) {
+            try {
+                element = document.querySelector(request.selector);
+            } catch (e) { }
+        }
+
+        // Fallback 2: Búsqueda por texto (Aproximación simple)
+        if (!element && request.text) {
+            const allElements = document.querySelectorAll('button, a, input, [role="button"]');
+            for (const el of allElements) {
+                if (el.innerText.includes(request.text) || el.value === request.text) {
+                    if (isVisibleElement(el)) {
+                        element = el;
+                        break;
+                    }
+                }
+            }
+        }
+
         if (element) {
             simulateHumanClick(element);
             sendResponse({ status: "clicked" });
@@ -45,6 +75,50 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }
     return true;
 });
+
+// Listener global de clics para grabación
+document.addEventListener('click', (event) => {
+    if (!isRecordingMode) return;
+
+    const query = [
+        "button", "a", "input", "select", "textarea", "option",
+        "[role='button']", "[role='link']", "[role='option']",
+        "[role='menuitem']", "[role='menuitemcheckbox']", "[role='menuitemradio']",
+        "[role='tab']", "[role='switch']", "[role='checkbox']", "[role='radio']",
+        "[role='combobox']", "[role='listbox']", "[role='searchbox']",
+        "[role='slider']", "[role='spinbutton']", "[role='treeitem']",
+        "[tabindex='0']",
+        ".btn", ".button",
+        ".mat-mdc-option", ".mdc-list-item", ".mat-option",
+        ".dropdown-item", ".menu-item",
+        "[onclick]", "[ng-click]", "[data-action]"
+    ].join(", ");
+
+    const el = event.target.closest(query);
+
+    if (el && isVisibleElement(el)) {
+        // Asegurar ID
+        let refId = el.dataset.aiRef;
+        if (!refId) {
+            refId = `ai-${Math.random().toString(36).slice(2, 11)}-${Date.now()}`;
+            el.dataset.aiRef = refId;
+        }
+
+        const text = (el.innerText || el.placeholder || el.value || el.getAttribute('aria-label') || "Elemento").replace(/\s+/g, ' ').trim().slice(0, 50);
+        const selector = generateBestSelector(el);
+
+        chrome.runtime.sendMessage({
+            action: "RECORD_USER_ACTION",
+            data: {
+                aiRef: refId,
+                text: text,
+                selector: selector,
+                tagName: el.tagName.toLowerCase(),
+                type: el.type || 'clickable'
+            }
+        }).catch(() => { });
+    }
+}, true);
 
 function simulateHumanClick(el) {
     el.focus();

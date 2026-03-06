@@ -435,6 +435,60 @@
             padding: 4px 10px;
             font-size: 10px;
         }
+
+        /* --- JOURNEY STEPS LIST --- */
+        .steps-container {
+            display: none;
+            background: #fdfdfd;
+            border-bottom: 1px solid #f1f1f1;
+            padding: 5px 0;
+            margin-left: 20px;
+            border-left: 2px solid #ddd;
+        }
+
+        .step-item {
+            padding: 4px 8px;
+            font-size: 11px;
+            color: #555;
+            border-bottom: 1px solid #f9f9f9;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .step-index {
+            color: #999;
+            font-weight: bold;
+            min-width: 20px;
+        }
+
+        .step-desc {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .step-selector {
+            font-size: 9px;
+            color: #aaa;
+            font-family: monospace;
+            max-width: 100px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .btn-toggle-steps {
+            background: none;
+            border: none;
+            color: #666;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 0 5px;
+            width: 20px;
+            text-align: center;
+        }
     </style>
 </head>
 

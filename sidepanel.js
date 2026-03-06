@@ -335,9 +335,13 @@ function renderJourneys() {
         return;
     }
     savedJourneys.forEach((journey, index) => {
-        const div = document.createElement('div');
-        div.className = 'journey-item';
-        div.innerHTML = `
+        const wrapper = document.createElement('div');
+        
+        // --- Journey Header ---
+        const header = document.createElement('div');
+        header.className = 'journey-item';
+        header.innerHTML = `
+            <button class="btn-toggle-steps" title="Ver pasos">▶</button>
             <div class="journey-info">
                 <b>${journey.name}</b>
                 <span>${journey.steps.length} pasos · ${journey.createdAt}</span>
@@ -347,12 +351,50 @@ function renderJourneys() {
                 <button class="btn-delete-journey" data-index="${index}" title="Eliminar">🗑</button>
             </div>
         `;
-        journeysList.appendChild(div);
+
+        // --- Steps List (Hidden) ---
+        const stepsContainer = document.createElement('div');
+        stepsContainer.className = 'steps-container';
+        
+        if (journey.steps && journey.steps.length > 0) {
+            journey.steps.forEach((step, stepIdx) => {
+                const stepDiv = document.createElement('div');
+                stepDiv.className = 'step-item';
+                
+                // Truncate selector for display
+                const selectorDisplay = step.selector ? (step.selector.length > 30 ? '...' + step.selector.slice(-30) : step.selector) : '';
+                
+                stepDiv.innerHTML = `
+                    <span class="step-index">#${stepIdx + 1}</span>
+                    <span class="step-desc" title="${step.text || step.selector}">${step.text || 'Acción sin nombre'}</span>
+                    <span class="step-selector" title="${step.selector || ''}">${selectorDisplay}</span>
+                `;
+                stepsContainer.appendChild(stepDiv);
+            });
+        } else {
+             const emptyDiv = document.createElement('div');
+             emptyDiv.className = 'step-item';
+             emptyDiv.innerHTML = '<span style="color:#999; font-style:italic;">No hay pasos grabados</span>';
+             stepsContainer.appendChild(emptyDiv);
+        }
+
+        // --- Toggle Logic ---
+        const toggleBtn = header.querySelector('.btn-toggle-steps');
+        toggleBtn.addEventListener('click', () => {
+            const isHidden = getComputedStyle(stepsContainer).display === 'none';
+            stepsContainer.style.display = isHidden ? 'block' : 'none';
+            toggleBtn.textContent = isHidden ? '▼' : '▶';
+        });
+
+        wrapper.appendChild(header);
+        wrapper.appendChild(stepsContainer);
+        journeysList.appendChild(wrapper);
     });
 
     // Play buttons
     journeysList.querySelectorAll('.btn-play-journey').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent toggling if clicked inside
             const idx = parseInt(btn.getAttribute('data-index'));
             playJourney(savedJourneys[idx]);
         });
@@ -360,7 +402,8 @@ function renderJourneys() {
 
     // Delete buttons
     journeysList.querySelectorAll('.btn-delete-journey').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
             const idx = parseInt(btn.getAttribute('data-index'));
             const name = savedJourneys[idx].name;
             if (confirm(`¿Eliminar la secuencia "${name}"?`)) {

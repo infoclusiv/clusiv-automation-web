@@ -33,9 +33,21 @@ function connectWebSocket() {
                 sendJourneysToPython(); 
             } 
 
-            // Python ordena ejecutar un Journey específico 
+            // Python ordena ejecutar un Journey específico (y opcionalmente pegar texto al final) 
             if (msg.action === "RUN_JOURNEY" && msg.journey_id) { 
-                executeJourney(msg.journey_id); 
+                executeJourney(msg.journey_id, msg.paste_text_at_end); 
+            } 
+
+            // Python manda pegar directamente el texto (Botón Manual) 
+            if (msg.action === "PASTE_TEXT_NOW" && msg.text) { 
+                chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => { 
+                    if(tabs.length > 0) { 
+                        chrome.tabs.sendMessage(tabs[0].id, { action: "PASTE_TEXT", text: msg.text }); 
+                        sendStatusToPython("completed", "✅ Script pegado exitosamente en el campo activo."); 
+                    } else { 
+                        sendStatusToPython("error", "No hay pestaña activa para pegar el texto."); 
+                    } 
+                }); 
             } 
         } catch (error) { 
             console.error("Error procesando mensaje del WS:", error); 
@@ -77,8 +89,9 @@ function sendJourneysToPython() {
 /** 
  * Busca un Journey por ID y ordena al content.js ejecutar cada paso 
  * @param {string} journeyId - El ID del journey a ejecutar 
+ * @param {string} textToPaste - Texto opcional para pegar al final del journey 
  */ 
-async function executeJourney(journeyId) { 
+async function executeJourney(journeyId, textToPaste) { 
     chrome.storage.local.get(['savedJourneys'], async (res) => { 
         const journeys = res.savedJourneys ||[]; 
         const journey = journeys.find(j => j.id === journeyId); 
@@ -123,6 +136,25 @@ async function executeJourney(journeyId) {
             
             // Pausa de 1.5 segundos entre clics para permitir animaciones/cargas de red 
             await new Promise(resolve => setTimeout(resolve, 1500)); 
+        } 
+
+        // --- NUEVA LÓGICA: Pegar texto al finalizar la secuencia de clics --- 
+        if (textToPaste) { 
+            sendStatusToPython("progress", "Paso Final: Insertando contenido de script.txt..."); 
+            try { 
+                const response = await chrome.tabs.sendMessage(tab.id, { 
+                    action: "PASTE_TEXT", 
+                    text: textToPaste 
+                }); 
+                if(response && response.status === "error") { 
+                    sendStatusToPython("error", "Fallo al pegar: Ningún campo de texto quedó enfocado."); 
+                    return; 
+                } 
+            } catch (e) { 
+                sendStatusToPython("error", "Error de conexión al intentar inyectar el script."); 
+                return; 
+            } 
+            await new Promise(resolve => setTimeout(resolve, 1000)); 
         } 
 
         sendStatusToPython("completed", `✅ Secuencia finalizada: ${journey.name}`); 

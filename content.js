@@ -73,6 +73,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             sendResponse({ status: "not_found" });
         }
     }
+
+    if (request.action === "PASTE_TEXT") { 
+        let el = document.activeElement; 
+
+        // A veces las webs modernas usan shadow DOM (ej. web components), busquemos el elemento real 
+        while (el && el.shadowRoot && el.shadowRoot.activeElement) { 
+            el = el.shadowRoot.activeElement; 
+        } 
+
+        if (el && el.tagName !== 'BODY') { 
+            el.focus(); 
+            let success = false; 
+            
+            // Intento 1: API nativa que mantiene el historial de Ctrl+Z y detecta eventos de framework (React/Angular) 
+            try { 
+                success = document.execCommand('insertText', false, request.text); 
+            } catch (e) {} 
+
+            // Fallback: Modificación directa de variables de valor 
+            if (!success) { 
+                if (typeof el.value !== 'undefined') { // Inputs estándar 
+                    el.value = (el.value || "") + request.text; 
+                    el.dispatchEvent(new Event('input', { bubbles: true })); 
+                    el.dispatchEvent(new Event('change', { bubbles: true })); 
+                } else if (el.isContentEditable) { // Cajas enriquecidas 
+                    el.innerText = (el.innerText || "") + request.text; 
+                    el.dispatchEvent(new Event('input', { bubbles: true })); 
+                } 
+            } 
+            sendResponse({ status: "pasted" }); 
+        } else { 
+            sendResponse({ status: "error", message: "No active element" }); 
+        } 
+    }
+
     return true;
 });
 

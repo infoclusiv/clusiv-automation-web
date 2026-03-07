@@ -103,8 +103,8 @@ chrome.runtime.onMessage.addListener((request) => {
         renderMap(request.map);
     }
     if (request.action === "RECORD_USER_ACTION" && isRecording) {
-        const { aiRef, text, selector } = request.data;
-        recordedSteps.push({ aiRef, text, selector });
+        const { aiRef, text, selector, locator } = request.data;
+        recordedSteps.push({ aiRef, text, selector, locator: locator || null });
         updateRecStepCount();
     }
 });
@@ -128,7 +128,7 @@ function renderMap(map) {
                     <b>${el.text || 'Sin texto'}</b>
                     <span class="selector">${el.tagName}${el.selector}</span>
                 </div>
-                <button class="btn-run" data-id="${el.aiRef}" data-text="${(el.text || 'Sin texto').replace(/"/g, '&quot;')}" data-selector="${(el.selector || '').replace(/"/g, '&quot;')}" title="Ejecutar Clic">▶</button>
+                <button class="btn-run" data-id="${el.aiRef}" data-text="${(el.text || 'Sin texto').replace(/"/g, '&quot;')}" data-selector="${(el.selector || '').replace(/"/g, '&quot;')}" data-locator="${encodeURIComponent(JSON.stringify(el.locator || null))}" title="Ejecutar Clic">▶</button>
             `;
             consoleLog.appendChild(div);
         });
@@ -140,15 +140,24 @@ function renderMap(map) {
             const id = e.currentTarget.getAttribute('data-id');
             const text = e.currentTarget.getAttribute('data-text');
             const selector = e.currentTarget.getAttribute('data-selector');
+            const locatorRaw = e.currentTarget.getAttribute('data-locator');
+            let locator = null;
+            if (locatorRaw) {
+                try {
+                    locator = JSON.parse(decodeURIComponent(locatorRaw));
+                } catch (err) {
+                    locator = null;
+                }
+            }
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
             if (tab) {
-                chrome.tabs.sendMessage(tab.id, { action: "SIMULATE_CLICK", id });
+                chrome.tabs.sendMessage(tab.id, { action: "SIMULATE_CLICK", id, selector, text, locator });
                 e.currentTarget.style.backgroundColor = "#3498db";
                 setTimeout(() => e.currentTarget.style.backgroundColor = "#27ae60", 500);
 
                 // --- RECORDING: capturar paso ---
                 if (isRecording) {
-                    recordedSteps.push({ aiRef: id, text, selector });
+                    recordedSteps.push({ aiRef: id, text, selector, locator });
                     updateRecStepCount();
                 }
             }
@@ -443,7 +452,8 @@ async function playJourney(journey) {
                 action: "SIMULATE_CLICK", 
                 id: step.aiRef,
                 selector: step.selector,
-                text: step.text 
+                text: step.text,
+                locator: step.locator || null
             });
         } catch (e) {
             playbackStepLabel.textContent = `⚠️ Error en paso ${i + 1}: elemento no encontrado`;

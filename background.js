@@ -122,7 +122,8 @@ async function executeJourney(journeyId, textToPaste) {
                     action: "SIMULATE_CLICK", 
                     id: step.aiRef, 
                     selector: step.selector, 
-                    text: step.text 
+                    text: step.text,
+                    locator: step.locator || null
                 }); 
 
                 if (response && response.status === "not_found") { 

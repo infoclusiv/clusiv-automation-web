@@ -41,12 +41,24 @@ function connectWebSocket() {
             // Python manda pegar directamente el texto (Botón Manual) 
             if (msg.action === "PASTE_TEXT_NOW" && msg.text) { 
                 chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => { 
-                    if(tabs.length > 0) { 
-                        chrome.tabs.sendMessage(tabs[0].id, { action: "PASTE_TEXT", text: msg.text }); 
-                        sendStatusToPython("completed", "✅ Script pegado exitosamente en el campo activo."); 
-                    } else { 
+                    if (tabs.length === 0) { 
                         sendStatusToPython("error", "No hay pestaña activa para pegar el texto."); 
-                    } 
+                        return;
+                    }
+
+                    try {
+                        const response = await chrome.tabs.sendMessage(tabs[0].id, { action: "PASTE_TEXT", text: msg.text });
+                        if (!response || response.status !== "pasted") {
+                            const errorMessage = response?.message || "El contenido no pudo insertarse en el campo objetivo.";
+                            sendStatusToPython("error", `Fallo al pegar: ${errorMessage}`);
+                            return;
+                        }
+
+                        sendStatusToPython("paste_completed", "✅ Script pegado exitosamente en el campo activo.");
+                    } catch (error) {
+                        console.error("Error enviando PASTE_TEXT a la pestaña activa:", error);
+                        sendStatusToPython("error", "Error de conexión al intentar pegar el texto.");
+                    }
                 }); 
             } 
         } catch (error) { 
@@ -97,16 +109,18 @@ async function executeJourney(journeyId, textToPaste) {
         const journey = journeys.find(j => j.id === journeyId); 
 
         if (!journey) { 
-            sendStatusToPython("error", `Journey ID '${journeyId}' no encontrado en la extensión.`); 
+            sendStatusToPython("error", `Journey ID '${journeyId}' no encontrado en la extensión.`, journeyId); 
             return; 
         } 
 
-        sendStatusToPython("started", `Iniciando secuencia: ${journey.name} (${journey.steps.length} pasos)`); 
+        if (!sendStatusToPython("started", `Iniciando secuencia: ${journey.name} (${journey.steps.length} pasos)`, journeyId)) {
+            return;
+        }
 
         // Obtener la pestaña activa 
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); 
         if (!tab) { 
-            sendStatusToPython("error", "No hay una pestaña activa para ejecutar los clics."); 
+            sendStatusToPython("error", "No hay una pestaña activa para ejecutar los clics.", journeyId); 
             return; 
         } 
 
@@ -114,7 +128,9 @@ async function executeJourney(journeyId, textToPaste) {
         for (let i = 0; i < journey.steps.length; i++) { 
             const step = journey.steps[i]; 
             
-            sendStatusToPython("progress", `Ejecutando paso ${i + 1}/${journey.steps.length}: ${step.text}`); 
+            if (!sendStatusToPython("progress", `Ejecutando paso ${i + 1}/${journey.steps.length}: ${step.text}`, journeyId)) {
+                return;
+            }
             
             try { 
                 // Enviar comando al content.js 
@@ -127,11 +143,11 @@ async function executeJourney(journeyId, textToPaste) {
                 }); 
 
                 if (response && response.status === "not_found") { 
-                    sendStatusToPython("error", `Fallo en el paso ${i + 1}: Elemento no encontrado en el DOM.`); 
+                    sendStatusToPython("error", `Fallo en el paso ${i + 1}: Elemento no encontrado en el DOM.`, journeyId); 
                     return; // Detener ejecución si falla un paso 
                 } 
             } catch (e) { 
-                sendStatusToPython("error", `Fallo de conexión con la pestaña en el paso ${i + 1}. ¿La página está recargando?`); 
+                sendStatusToPython("error", `Fallo de conexión con la pestaña en el paso ${i + 1}. ¿La página está recargando?`, journeyId); 
                 return; 
             } 
             
@@ -141,38 +157,59 @@ async function executeJourney(journeyId, textToPaste) {
 
         // --- NUEVA LÓGICA: Pegar texto al finalizar la secuencia de clics --- 
         if (textToPaste) { 
-            sendStatusToPython("progress", "Paso Final: Insertando contenido de script.txt..."); 
+            if (!sendStatusToPython("progress", "Paso Final: Insertando contenido de script.txt...", journeyId)) {
+                return;
+            }
             try { 
                 const response = await chrome.tabs.sendMessage(tab.id, { 
                     action: "PASTE_TEXT", 
                     text: textToPaste 
                 }); 
-                if(response && response.status === "error") { 
-                    sendStatusToPython("error", "Fallo al pegar: Ningún campo de texto quedó enfocado."); 
+                if (!response || response.status !== "pasted") {
+                    const errorMessage = response?.message || "El contenido no pudo insertarse en el campo objetivo.";
+                    sendStatusToPython("error", `Fallo al pegar: ${errorMessage}`, journeyId);
                     return; 
                 } 
+                if (!sendStatusToPython("paste_completed", "Script pegado correctamente", journeyId)) {
+                    return;
+                }
             } catch (e) { 
-                sendStatusToPython("error", "Error de conexión al intentar inyectar el script."); 
+                sendStatusToPython("error", "Error de conexión al intentar inyectar el script.", journeyId); 
                 return; 
             } 
             await new Promise(resolve => setTimeout(resolve, 1000)); 
         } 
 
-        sendStatusToPython("completed", `✅ Secuencia finalizada: ${journey.name}`); 
+        sendStatusToPython("completed", `✅ Secuencia finalizada: ${journey.name}`, journeyId); 
     }); 
 } 
 
 /** 
  * Función auxiliar para enviar estados a Python 
  */ 
-function sendStatusToPython(statusType, messageStr) { 
-    if (ws && ws.readyState === WebSocket.OPEN) { 
-        ws.send(JSON.stringify({ 
-            action: "JOURNEY_STATUS", 
-            status: statusType, 
-            message: messageStr 
-        })); 
-    } 
+function sendStatusToPython(statusType, messageStr, journeyId = null) { 
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+        console.error("No se pudo enviar el estado al backend: WebSocket no disponible.", { statusType, journeyId });
+        return false;
+    }
+
+    const payload = { 
+        action: "JOURNEY_STATUS", 
+        status: statusType, 
+        message: messageStr 
+    };
+
+    if (journeyId) {
+        payload.journey_id = journeyId;
+    }
+
+    try {
+        ws.send(JSON.stringify(payload));
+        return true;
+    } catch (error) {
+        console.error("No se pudo enviar el estado al backend.", { statusType, journeyId, error });
+        return false;
+    }
 } 
 
 // ========================================== 

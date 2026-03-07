@@ -3,6 +3,7 @@ let autoScanActive = false;
 let isRecordingMode = false;
 let domObserver = null;
 let debounceTimer = null;
+let lastFocusedEditable = null;
 
 const INTERACTIVE_QUERY = [
     "button", "a", "input", "select", "textarea", "option",
@@ -18,12 +19,139 @@ const INTERACTIVE_QUERY = [
     "[onclick]", "[ng-click]", "[data-action]"
 ].join(", ");
 
+const EDITABLE_QUERY = [
+    "textarea",
+    "input:not([type='button']):not([type='checkbox']):not([type='color']):not([type='file']):not([type='hidden']):not([type='image']):not([type='radio']):not([type='range']):not([type='reset']):not([type='submit'])",
+    "[contenteditable='true']",
+    "[contenteditable='']",
+    "[role='textbox']",
+    "[role='searchbox']"
+].join(", ");
+
 // --- UTILIDADES ---
 function debounce(func, delay) {
     return (...args) => {
         clearTimeout(debounceTimer);
         debounceTimer = setTimeout(() => func.apply(this, args), delay);
     };
+}
+
+function getEditableText(el) {
+    if (!el) return null;
+    if (!isEditableElement(el)) return null;
+    if (typeof el.value !== 'undefined') return el.value || "";
+    if (el.isContentEditable) return el.innerText || "";
+    return null;
+}
+
+function getDeepActiveElement(root = document) {
+    let el = root.activeElement || null;
+    while (el && el.shadowRoot && el.shadowRoot.activeElement) {
+        el = el.shadowRoot.activeElement;
+    }
+    return el;
+}
+
+function isEditableElement(el) {
+    if (!el || el.tagName === 'BODY' || el.disabled || el.readOnly) return false;
+    if (el.matches?.(EDITABLE_QUERY)) return true;
+    return el.isContentEditable === true;
+}
+
+function findEditableCandidate() {
+    const activeEl = getDeepActiveElement();
+    if (isEditableElement(activeEl)) return activeEl;
+    if (isEditableElement(lastFocusedEditable) && document.contains(lastFocusedEditable)) {
+        return lastFocusedEditable;
+    }
+
+    const candidates = Array.from(document.querySelectorAll(EDITABLE_QUERY));
+    return candidates.find((candidate) => isEditableElement(candidate) && isVisibleElement(candidate)) || null;
+}
+
+function wait(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function insertTextIntoElement(el, text) {
+    el.focus({ preventScroll: false });
+
+    let success = false;
+    try {
+        success = document.execCommand('insertText', false, text);
+    } catch (e) {}
+
+    if (!success) {
+        if (typeof el.setRangeText === 'function' && typeof el.selectionStart === 'number' && typeof el.selectionEnd === 'number') {
+            const start = el.selectionStart;
+            const end = el.selectionEnd;
+            el.setRangeText(text, start, end, 'end');
+            success = true;
+        } else if (typeof el.value !== 'undefined') {
+            el.value = `${el.value || ""}${text}`;
+            success = true;
+        } else if (el.isContentEditable) {
+            const selection = window.getSelection();
+            if (selection && selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                range.deleteContents();
+                range.insertNode(document.createTextNode(text));
+                range.collapse(false);
+                selection.removeAllRanges();
+                selection.addRange(range);
+            } else {
+                el.innerText = `${el.innerText || ""}${text}`;
+            }
+            success = true;
+        }
+    }
+
+    if (success) {
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    return success;
+}
+
+async function pasteTextWithRetries(text, attempts = 6, delayMs = 250) {
+    let lastFailure = "No active element";
+
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const el = findEditableCandidate();
+        if (!el) {
+            lastFailure = "No active element";
+            await wait(delayMs);
+            continue;
+        }
+
+        const beforeValue = getEditableText(el);
+        if (beforeValue === null) {
+            lastFailure = "Active element is not editable";
+            await wait(delayMs);
+            continue;
+        }
+
+        const inserted = insertTextIntoElement(el, text);
+        await wait(50);
+
+        const afterValue = getEditableText(el);
+        if (!inserted || afterValue === null) {
+            lastFailure = "Active element became unavailable";
+            await wait(delayMs);
+            continue;
+        }
+
+        if (afterValue !== beforeValue && afterValue.includes(text)) {
+            lastFocusedEditable = el;
+            return { status: "pasted" };
+        }
+
+        lastFailure = "Text was not inserted into the expected field";
+        await wait(delayMs);
+    }
+
+    return { status: "error", message: lastFailure };
 }
 
 const autoAnalyzeAndSync = debounce(() => {
@@ -68,38 +196,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }).catch(() => sendResponse({ status: "not_found" }));
     }
 
-    if (request.action === "PASTE_TEXT") { 
-        let el = document.activeElement; 
-
-        // A veces las webs modernas usan shadow DOM (ej. web components), busquemos el elemento real 
-        while (el && el.shadowRoot && el.shadowRoot.activeElement) { 
-            el = el.shadowRoot.activeElement; 
-        } 
-
-        if (el && el.tagName !== 'BODY') { 
-            el.focus(); 
-            let success = false; 
-            
-            // Intento 1: API nativa que mantiene el historial de Ctrl+Z y detecta eventos de framework (React/Angular) 
-            try { 
-                success = document.execCommand('insertText', false, request.text); 
-            } catch (e) {} 
-
-            // Fallback: Modificación directa de variables de valor 
-            if (!success) { 
-                if (typeof el.value !== 'undefined') { // Inputs estándar 
-                    el.value = (el.value || "") + request.text; 
-                    el.dispatchEvent(new Event('input', { bubbles: true })); 
-                    el.dispatchEvent(new Event('change', { bubbles: true })); 
-                } else if (el.isContentEditable) { // Cajas enriquecidas 
-                    el.innerText = (el.innerText || "") + request.text; 
-                    el.dispatchEvent(new Event('input', { bubbles: true })); 
-                } 
-            } 
-            sendResponse({ status: "pasted" }); 
-        } else { 
-            sendResponse({ status: "error", message: "No active element" }); 
-        } 
+    if (request.action === "PASTE_TEXT") {
+        pasteTextWithRetries(request.text).then(sendResponse);
     }
 
     return true;
@@ -133,6 +231,13 @@ document.addEventListener('click', (event) => {
                 type: el.type || 'clickable'
             }
         }).catch(() => { });
+    }
+}, true);
+
+document.addEventListener('focusin', (event) => {
+    const target = event.target;
+    if (isEditableElement(target)) {
+        lastFocusedEditable = target;
     }
 }, true);
 

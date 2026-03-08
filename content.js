@@ -16,7 +16,17 @@ const INTERACTIVE_QUERY = [
     ".btn", ".button",
     ".mat-mdc-option", ".mdc-list-item", ".mat-option",
     ".dropdown-item", ".menu-item",
-    "[onclick]", "[ng-click]", "[data-action]"
+    "[onclick]", "[ng-click]", "[data-action]",
+
+    // ✅ NUEVO: Elementos de media y reproductores
+    "audio",
+    "video",
+    "[class*='audio']",
+    "[class*='player']",
+    "[class*='waveform']",
+    "[class*='speech']",
+    ".wavesurfer-wrapper",
+    "wave"
 ].join(", ");
 
 const EDITABLE_QUERY = [
@@ -79,7 +89,7 @@ function insertTextIntoElement(el, text) {
     let success = false;
     try {
         success = document.execCommand('insertText', false, text);
-    } catch (e) {}
+    } catch (e) { }
 
     if (!success) {
         if (typeof el.setRangeText === 'function' && typeof el.selectionStart === 'number' && typeof el.selectionEnd === 'number') {
@@ -160,31 +170,189 @@ const autoAnalyzeAndSync = debounce(() => {
     chrome.runtime.sendMessage({ action: "AUTO_UPDATE_MAP", map: semanticMap }).catch(() => { });
 }, 700);
 
+// ============================================================
+// ✅ NUEVO: Detector de audio dinámico con MutationObserver
+//    Separado del observer principal para máxima reactividad
+// ============================================================
+let audioObserver = null;
+
+function startAudioObserver() {
+    if (audioObserver) return;
+
+    audioObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+            for (const node of mutation.addedNodes) {
+                if (node.nodeType !== 1) continue; // solo elementos
+
+                // ¿Es un <audio> directo?
+                if (node.tagName === 'AUDIO') {
+                    handleNewAudioElement(node);
+                    continue;
+                }
+
+                // ¿Contiene un <audio> dentro?
+                const audioInside = node.querySelector?.('audio');
+                if (audioInside) {
+                    handleNewAudioElement(audioInside);
+                }
+            }
+        }
+    });
+
+    audioObserver.observe(document.body, {
+        childList: true,
+        subtree: true
+    });
+}
+
+/**
+ * Se llama cada vez que aparece un <audio> nuevo en el DOM.
+ * Notifica al background/sidepanel y agrega data-ai-ref si no tiene.
+ */
+function handleNewAudioElement(audioEl) {
+    // Asignar data-ai-ref si no tiene
+    if (!audioEl.dataset.aiRef) {
+        audioEl.dataset.aiRef = `ai-audio-${Math.random().toString(36).slice(2, 9)}-${Date.now()}`;
+    }
+
+    // Esperar a que el src esté disponible (puede tardar unos ms en Angular)
+    const notifyWhenReady = () => {
+        const src = audioEl.src || audioEl.currentSrc || '';
+        const isBase64 = src.startsWith('data:audio');
+        const isBlob = src.startsWith('blob:');
+        const isUrl = src.startsWith('http');
+
+        chrome.runtime.sendMessage({
+            action: "AUDIO_DETECTED",
+            aiRef: audioEl.dataset.aiRef,
+            src: isBase64 ? '[base64 audio]' : src,    // no enviamos el base64 completo
+            srcFull: src,                                // ← src real para descarga
+            isBase64,
+            isBlob,
+            isUrl,
+            duration: audioEl.duration || null,
+            mimeType: src.split(';')[0].replace('data:', '') || 'audio/wav'
+        }).catch(() => { });
+    };
+
+    // Si ya tiene src, notificar de inmediato
+    if (audioEl.src || audioEl.currentSrc) {
+        notifyWhenReady();
+    } else {
+        // Esperar al evento loadedmetadata
+        audioEl.addEventListener('loadedmetadata', notifyWhenReady, { once: true });
+        // Fallback por si loadedmetadata no dispara
+        setTimeout(notifyWhenReady, 800);
+    }
+
+    // También re-disparar el autoAnalyzeAndSync para que aparezca en el mapa DOM
+    autoAnalyzeAndSync();
+}
+
+// Iniciar el detector de audio inmediatamente al cargar el content script
+startAudioObserver();
+
+
+// ============================================================
+// ✅ NUEVO: Función para descargar audio base64/blob desde la página
+// ============================================================
+function downloadAudioFromPage(aiRef, filename) {
+    // Buscar por data-ai-ref o simplemente el primer <audio>
+    const audioEl = aiRef
+        ? document.querySelector(`[data-ai-ref="${aiRef}"]`)
+        : document.querySelector('audio');
+
+    if (!audioEl) {
+        return { status: "not_found", message: "No se encontró el elemento <audio>" };
+    }
+
+    const src = audioEl.src || audioEl.currentSrc;
+    if (!src) {
+        return { status: "no_src", message: "El elemento audio no tiene src todavía" };
+    }
+
+    try {
+        const a = document.createElement('a');
+        a.href = src;
+        a.download = filename || 'audio_generado.wav';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return { status: "download_started", filename: a.download };
+    } catch (e) {
+        return { status: "error", message: e.message };
+    }
+}
+
+/**
+ * ✅ NUEVO: Espera activa hasta que aparezca un <audio> en el DOM.
+ * Útil en journeys cuando el audio se genera después de clics.
+ */
+async function waitForAudioElement(timeoutMs = 15000) {
+    // Ya existe
+    const existing = document.querySelector('audio');
+    if (existing && (existing.src || existing.currentSrc)) {
+        return { status: "found", aiRef: existing.dataset.aiRef, src: existing.src };
+    }
+
+    return new Promise((resolve) => {
+        const deadline = setTimeout(() => {
+            obs.disconnect();
+            resolve({ status: "timeout", message: "Audio no apareció en el tiempo esperado" });
+        }, timeoutMs);
+
+        const obs = new MutationObserver(() => {
+            const el = document.querySelector('audio');
+            if (el) {
+                const checkSrc = () => {
+                    const src = el.src || el.currentSrc;
+                    if (src) {
+                        clearTimeout(deadline);
+                        obs.disconnect();
+                        resolve({ status: "found", aiRef: el.dataset.aiRef, src });
+                    }
+                };
+                checkSrc();
+                if (!el.src) el.addEventListener('loadedmetadata', checkSrc, { once: true });
+            }
+        });
+
+        obs.observe(document.body, { childList: true, subtree: true });
+    });
+}
+
+
 // --- LÓGICA CORE ---
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+
     if (request.action === "ANALYZE_DOM") {
         const semanticMap = getSemanticMap();
         sendResponse({ map: semanticMap });
     }
+
     if (request.action === "START_AUTO_SCAN") {
         autoScanActive = true;
         startObserver();
-        autoAnalyzeAndSync(); // Escaneo inicial
+        autoAnalyzeAndSync();
         sendResponse({ status: "auto_scan_started" });
     }
+
     if (request.action === "STOP_AUTO_SCAN") {
         autoScanActive = false;
         stopObserver();
         sendResponse({ status: "auto_scan_stopped" });
     }
+
     if (request.action === "START_RECORDING") {
         isRecordingMode = true;
         sendResponse({ status: "recording_started" });
     }
+
     if (request.action === "STOP_RECORDING") {
         isRecordingMode = false;
         sendResponse({ status: "recording_stopped" });
     }
+
     if (request.action === "SIMULATE_CLICK") {
         clickWithRetries(request).then((element) => {
             if (element) {
@@ -200,8 +368,107 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         pasteTextWithRetries(request.text).then(sendResponse);
     }
 
+    // ✅ NUEVO: Control directo de audio (play/pause/stop)
+    if (request.action === "CONTROL_AUDIO") {
+        const audioEl = request.aiRef
+            ? document.querySelector(`[data-ai-ref="${request.aiRef}"]`)
+            : document.querySelector('audio');
+
+        if (!audioEl) {
+            sendResponse({ status: "not_found", message: "No hay elemento <audio> en el DOM" });
+            return true;
+        }
+
+        if (request.command === "play") {
+            audioEl.play()
+                .then(() => sendResponse({ status: "playing" }))
+                .catch(e => sendResponse({ status: "error", message: e.message }));
+            return true;
+        }
+
+        if (request.command === "pause") {
+            audioEl.pause();
+            sendResponse({ status: "paused", currentTime: audioEl.currentTime });
+            return true;
+        }
+
+        if (request.command === "stop") {
+            audioEl.pause();
+            audioEl.currentTime = 0;
+            sendResponse({ status: "stopped" });
+            return true;
+        }
+
+        if (request.command === "get_info") {
+            const src = audioEl.src || audioEl.currentSrc || '';
+            sendResponse({
+                status: "ok",
+                aiRef: audioEl.dataset.aiRef,
+                duration: audioEl.duration,
+                currentTime: audioEl.currentTime,
+                paused: audioEl.paused,
+                ended: audioEl.ended,
+                isBase64: src.startsWith('data:audio'),
+                isBlob: src.startsWith('blob:'),
+                mimeType: src.startsWith('data:') ? src.split(';')[0].replace('data:', '') : 'unknown'
+            });
+            return true;
+        }
+
+        // Esperar a que el audio termine de reproducirse
+        if (request.command === "wait_end") {
+            if (audioEl.ended) {
+                sendResponse({ status: "already_ended" });
+                return true;
+            }
+            audioEl.addEventListener('ended', () => {
+                sendResponse({ status: "ended" });
+            }, { once: true });
+            // Timeout de seguridad: máx 5 minutos
+            setTimeout(() => sendResponse({ status: "timeout" }), 300000);
+            return true; // respuesta asíncrona
+        }
+    }
+
+    // ✅ NUEVO: Descargar el audio generado (funciona con base64 y blob)
+    if (request.action === "DOWNLOAD_AUDIO") {
+        const result = downloadAudioFromPage(request.aiRef, request.filename);
+        sendResponse(result);
+        return true;
+    }
+
+    // ✅ NUEVO: Esperar activamente a que aparezca el <audio> en el DOM
+    if (request.action === "WAIT_FOR_AUDIO") {
+        waitForAudioElement(request.timeoutMs || 15000).then(sendResponse);
+        return true;
+    }
+
+    // ✅ NUEVO: Obtener el src completo del audio (para descarga externa)
+    if (request.action === "GET_AUDIO_SRC") {
+        const audioEl = request.aiRef
+            ? document.querySelector(`[data-ai-ref="${request.aiRef}"]`)
+            : document.querySelector('audio');
+
+        if (!audioEl) {
+            sendResponse({ status: "not_found" });
+            return true;
+        }
+
+        const src = audioEl.src || audioEl.currentSrc || '';
+        sendResponse({
+            status: "ok",
+            src,
+            isBase64: src.startsWith('data:audio'),
+            isBlob: src.startsWith('blob:'),
+            aiRef: audioEl.dataset.aiRef,
+            duration: audioEl.duration
+        });
+        return true;
+    }
+
     return true;
 });
+
 
 // Listener global de clics para grabación
 document.addEventListener('click', (event) => {
@@ -210,7 +477,6 @@ document.addEventListener('click', (event) => {
     const el = event.target.closest(INTERACTIVE_QUERY);
 
     if (el && isVisibleElement(el)) {
-        // Asegurar ID
         let refId = el.dataset.aiRef;
         if (!refId) {
             refId = `ai-${Math.random().toString(36).slice(2, 11)}-${Date.now()}`;
@@ -251,9 +517,16 @@ function simulateHumanClick(el) {
     });
 }
 
+// ============================================================
+// ✅ MODIFICADO: isVisibleElement ahora acepta <audio> y <video>
+// ============================================================
 function isVisibleElement(el) {
+    // Los elementos de media son siempre válidos aunque sean "invisibles"
+    if (el.tagName === 'AUDIO' || el.tagName === 'VIDEO') return true;
+
     // Aceptar si tiene dimensiones directas
     if (el.offsetWidth > 0 || el.offsetHeight > 0) return true;
+
     // Aceptar si está dentro de un overlay/popover activo
     const overlay = el.closest(
         '.cdk-overlay-pane, [popover], .cdk-overlay-container, ' +
@@ -261,23 +534,27 @@ function isVisibleElement(el) {
         '.dropdown-menu.show, .popover.show, .modal.show'
     );
     if (overlay) return true;
+
     // Verificar computed style
     const style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden') return false;
+
     // Aceptar elementos con aria-selected o aria-expanded
     if (el.hasAttribute('aria-selected') || el.hasAttribute('aria-expanded')) return true;
+
     return false;
 }
 
+// ============================================================
+// ✅ MODIFICADO: getSemanticMap ahora incluye contexto de media
+// ============================================================
 function getSemanticMap() {
     const elements = collectDeepInteractiveElements();
     const groupedData = {};
 
     elements.forEach(el => {
-        // Ignorar elementos ocultos
         if (!isVisibleElement(el)) return;
 
-        // Generar o recuperar ID único persistente
         let refId = el.dataset.aiRef;
         if (!refId) {
             refId = `ai-${Math.random().toString(36).slice(2, 11)}-${Date.now()}`;
@@ -285,14 +562,39 @@ function getSemanticMap() {
         }
 
         const context = identifyContext(el);
-        const elementData = {
-            aiRef: refId,
-            tagName: el.tagName.toLowerCase(),
-            type: el.type || 'clickable',
-            text: (el.innerText || el.placeholder || el.value || el.getAttribute('aria-label') || "Elemento").replace(/\s+/g, ' ').trim().slice(0, 50),
-            selector: generateBestSelector(el),
-            locator: buildStableLocator(el)
-        };
+
+        // ✅ Para <audio>, construir descripción útil
+        let elementData;
+        if (el.tagName === 'AUDIO' || el.tagName === 'VIDEO') {
+            const src = el.src || el.currentSrc || '';
+            const srcLabel = src.startsWith('data:audio') ? '[base64 audio]'
+                : src.startsWith('blob:') ? '[blob audio]'
+                    : src.startsWith('http') ? src.slice(0, 60)
+                        : '[sin src]';
+
+            elementData = {
+                aiRef: refId,
+                tagName: el.tagName.toLowerCase(),
+                type: 'media',
+                text: `${el.tagName.toLowerCase()} · ${srcLabel}`,
+                selector: generateBestSelector(el),
+                locator: buildStableLocator(el),
+                // ✅ Datos extra para media
+                isMedia: true,
+                duration: el.duration || null,
+                paused: el.paused,
+                hasControls: el.hasAttribute('controls')
+            };
+        } else {
+            elementData = {
+                aiRef: refId,
+                tagName: el.tagName.toLowerCase(),
+                type: el.type || 'clickable',
+                text: (el.innerText || el.placeholder || el.value || el.getAttribute('aria-label') || "Elemento").replace(/\s+/g, ' ').trim().slice(0, 50),
+                selector: generateBestSelector(el),
+                locator: buildStableLocator(el)
+            };
+        }
 
         if (!groupedData[context]) groupedData[context] = [];
         groupedData[context].push(elementData);
@@ -301,7 +603,22 @@ function getSemanticMap() {
     return groupedData;
 }
 
+// ============================================================
+// ✅ MODIFICADO: identifyContext reconoce contextos de media
+// ============================================================
 function identifyContext(el) {
+    // ✅ NUEVO: Detectar reproductores de audio/voz
+    if (el.tagName === 'AUDIO' || el.tagName === 'VIDEO') {
+        return '🎵 Reproductor de Media';
+    }
+    const mediaContainer = el.closest(
+        '[class*="speech-prompt-footer-actions-player"], ' +
+        '[class*="audio-player"], [class*="media-player"], ' +
+        '[class*="player"], [class*="waveform"], ' +
+        'ms-speech-prompt, [class*="speech"]'
+    );
+    if (mediaContainer) return '🎵 Reproductor de Media';
+
     // Detectar overlays y popovers dinámicos
     const overlay = el.closest('.cdk-overlay-pane, .cdk-overlay-container, [popover]');
     if (overlay) {
@@ -329,6 +646,12 @@ function generateBestSelector(el) {
     if (el.name) return `[name="${el.name}"]`;
     const ariaLabel = el.getAttribute('aria-label');
     if (ariaLabel) return `${el.tagName.toLowerCase()}[aria-label="${ariaLabel}"]`;
+
+    // ✅ NUEVO: Para audio, usar data-ai-ref si ya lo tiene
+    if ((el.tagName === 'AUDIO' || el.tagName === 'VIDEO') && el.dataset.aiRef) {
+        return `[data-ai-ref="${el.dataset.aiRef}"]`;
+    }
+
     let selector = el.tagName.toLowerCase();
     if (el.classList.length > 0) {
         const firstClass = el.classList[0];
@@ -545,10 +868,12 @@ async function clickWithRetries(request, maxAttempts = 8) {
     return null;
 }
 
+// ============================================================
+// ✅ MODIFICADO: startObserver también observa atributos de audio
+// ============================================================
 function startObserver() {
     if (domObserver) return;
     domObserver = new MutationObserver((mutations) => {
-        // Disparar si hay cambios en nodos O en atributos relevantes (overlays, dropdowns)
         const meaningfulChange = mutations.some(m =>
             m.addedNodes.length > 0 || m.removedNodes.length > 0 || m.type === 'attributes'
         );
@@ -558,7 +883,7 @@ function startObserver() {
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ['class', 'style', 'aria-expanded', 'aria-hidden', 'popover']
+        attributeFilter: ['class', 'style', 'aria-expanded', 'aria-hidden', 'popover', 'src']
     });
 }
 

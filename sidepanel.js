@@ -107,6 +107,15 @@ chrome.runtime.onMessage.addListener((request) => {
         recordedSteps.push({ aiRef, text, selector, locator: locator || null });
         updateRecStepCount();
     }
+
+    // ✅ NUEVO: El content.js detectó un <audio> nuevo en el DOM
+    if (request.action === "AUDIO_DETECTED") {
+        showAudioBanner(request);
+        // También forzar re-render del mapa si ya había datos
+        if (lastAnalysisData) {
+            refreshMapWithAudio(request);
+        }
+    }
 });
 
 function renderMap(map) {
@@ -274,7 +283,7 @@ async function startRecording() {
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab) {
-        chrome.tabs.sendMessage(tab.id, { action: "START_RECORDING" }).catch(() => {});
+        chrome.tabs.sendMessage(tab.id, { action: "START_RECORDING" }).catch(() => { });
     }
 }
 
@@ -286,7 +295,7 @@ async function stopRecording() {
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab) {
-        chrome.tabs.sendMessage(tab.id, { action: "STOP_RECORDING" }).catch(() => {});
+        chrome.tabs.sendMessage(tab.id, { action: "STOP_RECORDING" }).catch(() => { });
     }
 
     if (recordedSteps.length === 0) {
@@ -345,7 +354,7 @@ function renderJourneys() {
     }
     savedJourneys.forEach((journey, index) => {
         const wrapper = document.createElement('div');
-        
+
         // --- Journey Header ---
         const header = document.createElement('div');
         header.className = 'journey-item';
@@ -364,15 +373,15 @@ function renderJourneys() {
         // --- Steps List (Hidden) ---
         const stepsContainer = document.createElement('div');
         stepsContainer.className = 'steps-container';
-        
+
         if (journey.steps && journey.steps.length > 0) {
             journey.steps.forEach((step, stepIdx) => {
                 const stepDiv = document.createElement('div');
                 stepDiv.className = 'step-item';
-                
+
                 // Truncate selector for display
                 const selectorDisplay = step.selector ? (step.selector.length > 30 ? '...' + step.selector.slice(-30) : step.selector) : '';
-                
+
                 stepDiv.innerHTML = `
                     <span class="step-index">#${stepIdx + 1}</span>
                     <span class="step-desc" title="${step.text || step.selector}">${step.text || 'Acción sin nombre'}</span>
@@ -381,10 +390,10 @@ function renderJourneys() {
                 stepsContainer.appendChild(stepDiv);
             });
         } else {
-             const emptyDiv = document.createElement('div');
-             emptyDiv.className = 'step-item';
-             emptyDiv.innerHTML = '<span style="color:#999; font-style:italic;">No hay pasos grabados</span>';
-             stepsContainer.appendChild(emptyDiv);
+            const emptyDiv = document.createElement('div');
+            emptyDiv.className = 'step-item';
+            emptyDiv.innerHTML = '<span style="color:#999; font-style:italic;">No hay pasos grabados</span>';
+            stepsContainer.appendChild(emptyDiv);
         }
 
         // --- Toggle Logic ---
@@ -448,8 +457,8 @@ async function playJourney(journey) {
         playbackStepLabel.textContent = `Paso ${i + 1}/${journey.steps.length}: ${step.text}`;
 
         try {
-            await chrome.tabs.sendMessage(tab.id, { 
-                action: "SIMULATE_CLICK", 
+            await chrome.tabs.sendMessage(tab.id, {
+                action: "SIMULATE_CLICK",
                 id: step.aiRef,
                 selector: step.selector,
                 text: step.text,
@@ -474,3 +483,158 @@ async function playJourney(journey) {
 btnStopPlayback.addEventListener('click', () => {
     stopPlaybackFlag = true;
 });
+
+// ============================================================
+// NUEVAS FUNCIONES — agregar al final de sidepanel.js
+// ============================================================
+
+/**
+ * Muestra un banner flotante cuando se detecta audio nuevo.
+ * Permite reproducir, pausar y descargar sin salir del panel.
+ */
+function showAudioBanner(audioInfo) {
+    // Remover banner anterior si existe
+    const old = document.getElementById('audioBanner');
+    if (old) old.remove();
+
+    const banner = document.createElement('div');
+    banner.id = 'audioBanner';
+    banner.style.cssText = `
+        position: fixed; bottom: 0; left: 0; right: 0;
+        background: linear-gradient(135deg, #1a1a2e, #16213e);
+        border-top: 2px solid #7c3aed;
+        padding: 10px 12px;
+        z-index: 9999;
+        font-size: 11px;
+        color: #f0f0f5;
+        box-shadow: 0 -4px 20px rgba(124,58,237,0.3);
+    `;
+
+    const srcLabel = audioInfo.isBase64 ? 'base64/WAV'
+        : audioInfo.isBlob ? 'blob audio'
+            : (audioInfo.src || 'audio');
+
+    banner.innerHTML = `
+        <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+            <span style="font-size:18px;">🎵</span>
+            <div style="flex:1; min-width:0;">
+                <div style="font-weight:700; color:#c4b5fd;">Audio detectado</div>
+                <div style="color:#a0a0b0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                    ${srcLabel}
+                    ${audioInfo.duration ? ` · ${Math.round(audioInfo.duration)}s` : ''}
+                </div>
+            </div>
+            <button id="audioBannerPlay"   style="${bannerBtnStyle('#10b981')}">▶ Play</button>
+            <button id="audioBannerPause"  style="${bannerBtnStyle('#f59e0b')}">⏸ Pause</button>
+            <button id="audioBannerDl"     style="${bannerBtnStyle('#3b82f6')}">⬇ Descargar</button>
+            <button id="audioBannerClose"  style="${bannerBtnStyle('#6b7280')}">✕</button>
+        </div>
+    `;
+
+    document.body.appendChild(banner);
+
+    // Eventos del banner
+    document.getElementById('audioBannerPlay').addEventListener('click', async () => {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab) chrome.tabs.sendMessage(tab.id, {
+            action: "CONTROL_AUDIO",
+            command: "play",
+            aiRef: audioInfo.aiRef
+        });
+    });
+
+    document.getElementById('audioBannerPause').addEventListener('click', async () => {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab) chrome.tabs.sendMessage(tab.id, {
+            action: "CONTROL_AUDIO",
+            command: "pause",
+            aiRef: audioInfo.aiRef
+        });
+    });
+
+    document.getElementById('audioBannerDl').addEventListener('click', async () => {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab) chrome.tabs.sendMessage(tab.id, {
+            action: "DOWNLOAD_AUDIO",
+            aiRef: audioInfo.aiRef,
+            filename: `audio_${Date.now()}.wav`
+        });
+    });
+
+    document.getElementById('audioBannerClose').addEventListener('click', () => {
+        banner.remove();
+    });
+}
+
+function bannerBtnStyle(color) {
+    return `
+        background:${color}; border:none; border-radius:6px;
+        color:white; padding:5px 10px; cursor:pointer;
+        font-size:11px; font-weight:700; white-space:nowrap;
+    `;
+}
+
+/**
+ * Agrega el audio detectado al mapa DOM ya renderizado,
+ * sin necesidad de hacer un re-scan completo.
+ */
+function refreshMapWithAudio(audioInfo) {
+    // Buscar si ya existe la sección de media
+    let mediaSection = Array.from(consoleLog.querySelectorAll('.section-header'))
+        .find(h => h.innerText.includes('Reproductor'));
+
+    if (!mediaSection) {
+        mediaSection = document.createElement('div');
+        mediaSection.className = 'section-header';
+        mediaSection.innerText = '🎵 Reproductor de Media';
+        consoleLog.insertBefore(mediaSection, consoleLog.firstChild);
+    }
+
+    // Evitar duplicados por aiRef
+    const existingItem = consoleLog.querySelector(`[data-audio-ref="${audioInfo.aiRef}"]`);
+    if (existingItem) return;
+
+    const srcLabel = audioInfo.isBase64 ? '[base64 · WAV]'
+        : audioInfo.isBlob ? '[blob audio]'
+            : (audioInfo.src || '').slice(0, 50);
+
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.setAttribute('data-audio-ref', audioInfo.aiRef);
+    div.style.background = 'rgba(124,58,237,0.08)';
+    div.style.borderLeft = '3px solid #7c3aed';
+    div.innerHTML = `
+        <div class="item-info">
+            <b>🎵 audio · ${srcLabel}</b>
+            <span class="selector">audio[data-ai-ref="${audioInfo.aiRef}"]</span>
+        </div>
+        <div style="display:flex; gap:4px;">
+            <button class="btn-audio-play btn-run" 
+                    style="background:#10b981; width:auto; padding:0 8px; border-radius:4px;"
+                    data-ai-ref="${audioInfo.aiRef}" title="Play">▶</button>
+            <button class="btn-audio-dl btn-run"
+                    style="background:#3b82f6; width:auto; padding:0 8px; border-radius:4px;"
+                    data-ai-ref="${audioInfo.aiRef}" title="Descargar">⬇</button>
+        </div>
+    `;
+
+    // Insertar justo después de la sección header de media
+    mediaSection.insertAdjacentElement('afterend', div);
+
+    // Eventos de los botones inline
+    div.querySelector('.btn-audio-play').addEventListener('click', async () => {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab) chrome.tabs.sendMessage(tab.id, {
+            action: "CONTROL_AUDIO", command: "play", aiRef: audioInfo.aiRef
+        });
+    });
+
+    div.querySelector('.btn-audio-dl').addEventListener('click', async () => {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab) chrome.tabs.sendMessage(tab.id, {
+            action: "DOWNLOAD_AUDIO",
+            aiRef: audioInfo.aiRef,
+            filename: `audio_${Date.now()}.wav`
+        });
+    });
+}

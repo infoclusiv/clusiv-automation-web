@@ -227,3 +227,33 @@ chrome.runtime.onStartup.addListener(() => {
 
 // Iniciar conexión inmediatamente cuando se despierte el background script 
 connectWebSocket(); 
+
+// ==========================================
+// --- HANDLER DE MENSAJES INTERNOS (SIDEPANEL → BACKGROUND) ---
+// ==========================================
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+    if (request.action === "GET_ACTIVE_TAB_CONTEXT") {
+        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+            if (!tabs || tabs.length === 0) {
+                sendResponse({ url: "unknown", origin: "unknown", page_title: "unknown" });
+                return;
+            }
+
+            const tab = tabs[0];
+            let origin = "unknown";
+
+            try {
+                origin = new URL(tab.url).origin;
+            } catch (e) {
+            }
+
+            sendResponse({
+                url: tab.url || "unknown",
+                origin,
+                page_title: tab.title || "unknown"
+            });
+        });
+
+        return true;
+    }
+});

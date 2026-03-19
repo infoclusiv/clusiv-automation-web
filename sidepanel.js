@@ -366,6 +366,7 @@ function renderJourneys() {
             </div>
             <div class="journey-actions">
                 <button class="btn-play-journey" data-index="${index}" title="Reproducir">▶</button>
+                <button class="btn-export-journey" data-index="${index}" title="Exportar JSON">⬇</button>
                 <button class="btn-delete-journey" data-index="${index}" title="Eliminar">🗑</button>
             </div>
         `;
@@ -415,6 +416,15 @@ function renderJourneys() {
             e.stopPropagation(); // Prevent toggling if clicked inside
             const idx = parseInt(btn.getAttribute('data-index'));
             playJourney(savedJourneys[idx]);
+        });
+    });
+
+    // Export buttons
+    journeysList.querySelectorAll('.btn-export-journey').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = parseInt(btn.getAttribute('data-index'));
+            exportJourneyAsFile(savedJourneys[idx]);
         });
     });
 
@@ -637,4 +647,215 @@ function refreshMapWithAudio(audioInfo) {
             filename: `audio_${Date.now()}.wav`
         });
     });
+}
+
+// ==========================================
+// --- EXPORTACIÓN DE JOURNEYS ---
+// ==========================================
+
+/**
+ * Convierte un locator del formato interno de la extensión
+ * al formato de 6 estrategias para exportación.
+ * @param {object|null} locator - El locator guardado en el journey step
+ * @param {string} selector - El selector CSS del step
+ * @param {string} text - El texto visible del step
+ * @param {string} aiRef - El data-ai-ref del step
+ * @returns {object} Locators en formato exportable
+ */
+function buildExportLocators(locator, selector, text, aiRef) {
+    const val = (value) => {
+        if (typeof value !== 'string') {
+            return value || null;
+        }
+
+        return value.trim() !== '' ? value : null;
+    };
+
+    let primary = null;
+    if (locator?.ariaLabel) {
+        primary = { strategy: 'aria_label', value: locator.ariaLabel };
+    } else if (locator?.dataTestId) {
+        primary = { strategy: 'data_testid', value: locator.dataTestId };
+    } else if (locator?.dataCy) {
+        primary = { strategy: 'data_cy', value: locator.dataCy };
+    } else if (locator?.id) {
+        primary = { strategy: 'id', value: locator.id };
+    } else if (locator?.name) {
+        primary = { strategy: 'name', value: locator.name };
+    }
+
+    let secondary = null;
+    if (locator?.role) {
+        secondary = { strategy: 'role', value: locator.role };
+    } else if (locator?.dataTestId && primary?.strategy !== 'data_testid') {
+        secondary = { strategy: 'data_testid', value: locator.dataTestId };
+    }
+
+    const fallback = val(selector)
+        ? { strategy: 'css_selector', value: selector }
+        : null;
+
+    const textLocator = val(text)
+        ? { strategy: 'visible_text', value: text }
+        : null;
+
+    let xpath = null;
+    if (locator?.ariaLabel) {
+        xpath = { strategy: 'xpath', value: `//*[@aria-label="${locator.ariaLabel}"]` };
+    } else if (locator?.role) {
+        xpath = { strategy: 'xpath', value: `//*[@role="${locator.role}"]` };
+    } else if (locator?.id) {
+        xpath = { strategy: 'xpath', value: `//*[@id="${locator.id}"]` };
+    } else if (val(text)) {
+        xpath = { strategy: 'xpath', value: `//*[normalize-space()="${text}"]` };
+    }
+
+    const aiRefLocator = val(aiRef)
+        ? { strategy: 'ai_ref', value: aiRef }
+        : null;
+
+    return {
+        primary,
+        secondary,
+        fallback,
+        text: textLocator,
+        xpath,
+        ai_ref: aiRefLocator
+    };
+}
+
+/**
+ * Determina si un step es de tipo paste_text.
+ * @param {object} step - El step del journey
+ * @returns {boolean}
+ */
+function stepIsPasteText(step) {
+    if (step.action === 'paste_text') return true;
+    if (step.textToPaste || step.text_to_paste) return true;
+    if (step.locator?.role === 'textbox') return true;
+    if (step.isEditable === true) return true;
+
+    const editableHints = ['textarea', 'input', 'contenteditable', 'textbox', 'searchbox', 'editor'];
+    const textLower = (step.text || '').toLowerCase();
+    const tagLower = (step.locator?.tag || '').toLowerCase();
+
+    return editableHints.some((hint) => textLower.includes(hint) || tagLower.includes(hint));
+}
+
+/**
+ * Construye el payload JSON completo para exportar un journey.
+ * @param {object} journey - El journey tal como está en savedJourneys
+ * @param {object} tabContext - { url, origin, page_title } de la pestaña activa
+ * @returns {object} Objeto listo para JSON.stringify
+ */
+function buildExportPayload(journey, tabContext) {
+    const now = new Date().toISOString();
+
+    let createdAtIso = journey.createdAt;
+    try {
+        const parsed = new Date(journey.createdAt);
+        if (!Number.isNaN(parsed.getTime())) {
+            createdAtIso = parsed.toISOString();
+        }
+    } catch (e) {
+    }
+
+    const steps = (journey.steps || []).map((step, index) => {
+        const isPaste = stepIsPasteText(step);
+        const locators = buildExportLocators(
+            step.locator || null,
+            step.selector || '',
+            step.text || '',
+            step.aiRef || ''
+        );
+
+        return {
+            index: index + 1,
+            action: isPaste ? 'paste_text' : 'click',
+            description: step.text || `Paso ${index + 1}`,
+            text_to_paste: isPaste ? (step.textToPaste || step.text_to_paste || null) : null,
+            locators,
+            element_metadata: {
+                tag: step.locator?.tag || '',
+                role: step.locator?.role || '',
+                type: step.locator?.type || '',
+                is_editable: isPaste,
+                class_tokens: step.locator?.classTokens || []
+            },
+            timing: {
+                wait_before_ms: isPaste ? 500 : 0,
+                wait_after_ms: 1500
+            }
+        };
+    });
+
+    return {
+        schema_version: '1.0',
+        exported_at: now,
+        exported_by: 'Analista Web AI Pro v4.0',
+        journey: {
+            id: journey.id,
+            name: journey.name,
+            created_at: createdAtIso,
+            step_count: steps.length,
+            context: {
+                url: tabContext.url || 'unknown',
+                origin: tabContext.origin || 'unknown',
+                page_title: tabContext.page_title || 'unknown',
+                captured_at: now
+            },
+            steps
+        }
+    };
+}
+
+/**
+ * Obtiene el contexto de la pestaña activa desde el background
+ * y exporta el journey como archivo .json descargable.
+ * @param {object} journey - El journey a exportar
+ */
+async function exportJourneyAsFile(journey) {
+    if (!journey) {
+        return;
+    }
+
+    let tabContext = { url: 'unknown', origin: 'unknown', page_title: 'unknown' };
+
+    try {
+        tabContext = await new Promise((resolve) => {
+            chrome.runtime.sendMessage({ action: 'GET_ACTIVE_TAB_CONTEXT' }, (response) => {
+                if (chrome.runtime.lastError || !response) {
+                    resolve({ url: 'unknown', origin: 'unknown', page_title: 'unknown' });
+                    return;
+                }
+
+                resolve(response);
+            });
+        });
+    } catch (e) {
+        console.warn('No se pudo obtener contexto de pestaña:', e);
+    }
+
+    const payload = buildExportPayload(journey, tabContext);
+    const safeName = String(journey.name || 'journey')
+        .replace(/[^a-zA-Z0-9\-_\u00C0-\u024F]/g, '_')
+        .replace(/_+/g, '_')
+        .slice(0, 60);
+    const dateStr = new Date().toISOString().slice(0, 10);
+    const filename = `journey_${safeName}_${dateStr}.json`;
+
+    const json = JSON.stringify(payload, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+    console.log(`Journey exportado: ${filename}`);
 }

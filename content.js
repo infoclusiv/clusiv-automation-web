@@ -13,6 +13,9 @@ const INTERACTIVE_QUERY = [
     "[role='combobox']", "[role='listbox']", "[role='searchbox']",
     "[role='slider']", "[role='spinbutton']", "[role='treeitem']",
     "[tabindex='0']",
+    "[role='textbox']",
+    "[aria-multiline='true']",
+    ".ProseMirror",
     ".btn", ".button",
     ".mat-mdc-option", ".mdc-list-item", ".mat-option",
     ".dropdown-item", ".menu-item",
@@ -87,6 +90,53 @@ function insertTextIntoElement(el, text) {
     el.focus({ preventScroll: false });
 
     let success = false;
+
+    if (el.isContentEditable || el.getAttribute('role') === 'textbox') {
+        const selection = window.getSelection();
+        if (selection) {
+            const range = document.createRange();
+            range.selectNodeContents(el);
+            range.collapse(false);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+
+        const beforeInputEvt = new InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            inputType: 'insertText',
+            data: text
+        });
+        el.dispatchEvent(beforeInputEvt);
+
+        try {
+            success = document.execCommand('insertText', false, text);
+        } catch (e) { }
+
+        if (!success) {
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount > 0) {
+                const range = sel.getRangeAt(0);
+                range.deleteContents();
+                range.insertNode(document.createTextNode(text));
+                range.collapse(false);
+                sel.removeAllRanges();
+                sel.addRange(range);
+                success = true;
+            } else {
+                el.innerText = `${el.innerText || ""}${text}`;
+                success = true;
+            }
+        }
+
+        if (success) {
+            el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        return success;
+    }
+
     try {
         success = document.execCommand('insertText', false, text);
     } catch (e) { }
@@ -524,6 +574,9 @@ function isVisibleElement(el) {
     // Los elementos de media son siempre válidos aunque sean "invisibles"
     if (el.tagName === 'AUDIO' || el.tagName === 'VIDEO') return true;
 
+    if (el.isContentEditable === true) return true;
+    if (el.getAttribute('role') === 'textbox') return true;
+
     // Aceptar si tiene dimensiones directas
     if (el.offsetWidth > 0 || el.offsetHeight > 0) return true;
 
@@ -586,13 +639,22 @@ function getSemanticMap() {
                 hasControls: el.hasAttribute('controls')
             };
         } else {
+            const isEditor = el.isContentEditable || el.getAttribute('role') === 'textbox';
+            const elementType = isEditor ? 'editable' : el.type || 'clickable';
+            const elementText = isEditor
+                ? (el.getAttribute('aria-label') || el.getAttribute('placeholder') || el.getAttribute('data-placeholder') || el.innerText || 'Campo de texto')
+                    .replace(/\s+/g, ' ').trim().slice(0, 50)
+                : (el.innerText || el.placeholder || el.value || el.getAttribute('aria-label') || 'Elemento')
+                    .replace(/\s+/g, ' ').trim().slice(0, 50);
+
             elementData = {
                 aiRef: refId,
                 tagName: el.tagName.toLowerCase(),
-                type: el.type || 'clickable',
-                text: (el.innerText || el.placeholder || el.value || el.getAttribute('aria-label') || "Elemento").replace(/\s+/g, ' ').trim().slice(0, 50),
+                type: elementType,
+                text: elementText,
                 selector: generateBestSelector(el),
-                locator: buildStableLocator(el)
+                locator: buildStableLocator(el),
+                isEditable: isEditor
             };
         }
 

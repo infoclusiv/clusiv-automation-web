@@ -28,9 +28,11 @@ let chatHistory = [];
 let isRecording = false;
 let recordedSteps = [];
 let savedJourneys = [];
+let savedTexts = [];
 let isPlaying = false;
 let stopPlaybackFlag = false;
 const PLAYBACK_DELAY_MS = 1000;
+let editingTextId = null;
 
 // --- CONFIGURACIÓN ---
 chrome.storage.local.get(['apiKey', 'modelId'], (res) => {
@@ -62,15 +64,19 @@ btnLimpiar.addEventListener('click', () => {
 document.getElementById('tabLogs').addEventListener('click', () => switchTab('logs'));
 document.getElementById('tabChat').addEventListener('click', () => switchTab('chat'));
 document.getElementById('tabJourneys').addEventListener('click', () => switchTab('journeys'));
+document.getElementById('tabTexts').addEventListener('click', () => switchTab('texts'));
 
 function switchTab(target) {
     document.getElementById('tabLogs').classList.toggle('active', target === 'logs');
     document.getElementById('tabChat').classList.toggle('active', target === 'chat');
     document.getElementById('tabJourneys').classList.toggle('active', target === 'journeys');
+    document.getElementById('tabTexts').classList.toggle('active', target === 'texts');
     document.getElementById('viewLogs').classList.toggle('active', target === 'logs');
     document.getElementById('viewChat').classList.toggle('active', target === 'chat');
     document.getElementById('viewJourneys').classList.toggle('active', target === 'journeys');
+    document.getElementById('viewTexts').classList.toggle('active', target === 'texts');
     if (target === 'journeys') renderJourneys();
+    if (target === 'texts') renderTexts();
 }
 
 // --- ESCANEO Y AUTO-UPDATE ---
@@ -273,6 +279,35 @@ function updateRecStepCount() {
     recStepCount.classList.toggle('has-steps', recordedSteps.length > 0);
 }
 
+function showTextPicker() {
+    const panel = document.getElementById('textPickerPanel');
+    const list = document.getElementById('textPickerList');
+    list.innerHTML = '';
+
+    if (savedTexts.length === 0) {
+        list.innerHTML = '<div class="text-picker-empty">No hay textos guardados.<br>Ve a la pestaña Textos para crear uno.</div>';
+    } else {
+        savedTexts.forEach((txt) => {
+            const item = document.createElement('div');
+            const preview = txt.content.replace(/\s+/g, ' ').trim().slice(0, 50);
+            item.className = 'text-picker-item';
+            item.innerHTML = `<b>${txt.name}</b><span>${preview}${txt.content.length > 50 ? '...' : ''}</span>`;
+            item.addEventListener('click', () => {
+                recordedSteps.push({
+                    stepType: 'paste_text',
+                    textId: txt.id,
+                    textName: txt.name
+                });
+                updateRecStepCount();
+                panel.style.display = 'none';
+            });
+            list.appendChild(item);
+        });
+    }
+
+    panel.style.display = 'flex';
+}
+
 async function startRecording() {
     isRecording = true;
     recordedSteps = [];
@@ -280,6 +315,7 @@ async function startRecording() {
     btnRecord.textContent = '⏹ Detener';
     btnRecord.classList.add('recording');
     recordingBar.classList.add('is-recording');
+    document.getElementById('btnAddTextStep').classList.add('visible');
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab) {
@@ -292,6 +328,8 @@ async function stopRecording() {
     btnRecord.textContent = '⏺ Grabar';
     btnRecord.classList.remove('recording');
     recordingBar.classList.remove('is-recording');
+    document.getElementById('btnAddTextStep').classList.remove('visible');
+    document.getElementById('textPickerPanel').style.display = 'none';
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab) {
@@ -332,6 +370,18 @@ btnRecord.addEventListener('click', () => {
     }
 });
 
+document.getElementById('btnAddTextStep').addEventListener('click', () => {
+    if (!isRecording) {
+        return;
+    }
+
+    showTextPicker();
+});
+
+document.getElementById('btnCloseTextPicker').addEventListener('click', () => {
+    document.getElementById('textPickerPanel').style.display = 'none';
+});
+
 // --- JOURNEY PERSISTENCE ---
 function loadJourneys() {
     chrome.storage.local.get(['savedJourneys'], (res) => {
@@ -344,6 +394,126 @@ function saveJourneys() {
 }
 
 loadJourneys();
+
+function loadTexts() {
+    chrome.storage.local.get(['savedTexts'], (res) => {
+        savedTexts = res.savedTexts || [];
+    });
+}
+
+function saveTexts() {
+    chrome.storage.local.set({ savedTexts });
+}
+
+loadTexts();
+
+document.getElementById('btnNewText').addEventListener('click', () => {
+    editingTextId = null;
+    document.getElementById('textNameInput').value = '';
+    document.getElementById('textContentInput').value = '';
+    document.getElementById('textEditorPanel').style.display = 'flex';
+    document.getElementById('textNameInput').focus();
+});
+
+document.getElementById('btnCancelText').addEventListener('click', () => {
+    document.getElementById('textEditorPanel').style.display = 'none';
+    editingTextId = null;
+});
+
+document.getElementById('btnSaveText').addEventListener('click', () => {
+    const name = document.getElementById('textNameInput').value.trim();
+    const content = document.getElementById('textContentInput').value;
+
+    if (!name) {
+        alert('El texto necesita un nombre.');
+        return;
+    }
+
+    if (!content.trim()) {
+        alert('El contenido no puede estar vacio.');
+        return;
+    }
+
+    if (editingTextId) {
+        const index = savedTexts.findIndex((txt) => txt.id === editingTextId);
+        if (index !== -1) {
+            savedTexts[index].name = name;
+            savedTexts[index].content = content;
+        }
+    } else {
+        savedTexts.push({
+            id: 'txt-' + Date.now(),
+            name,
+            content
+        });
+    }
+
+    saveTexts();
+    renderTexts();
+});
+
+function renderTexts() {
+    const textsList = document.getElementById('textsList');
+    const editorPanel = document.getElementById('textEditorPanel');
+    textsList.innerHTML = '';
+    editorPanel.style.display = 'none';
+    editingTextId = null;
+    document.getElementById('textNameInput').value = '';
+    document.getElementById('textContentInput').value = '';
+
+    if (savedTexts.length === 0) {
+        textsList.innerHTML = '<div class="journey-empty">No hay textos guardados.</div>';
+        return;
+    }
+
+    savedTexts.forEach((txt) => {
+        const div = document.createElement('div');
+        const preview = txt.content.replace(/\s+/g, ' ').trim().slice(0, 60);
+        div.className = 'text-item';
+        div.innerHTML = `
+            <div class="text-item-info">
+                <b>${txt.name}</b>
+                <span>${preview}${txt.content.length > 60 ? '...' : ''}</span>
+            </div>
+            <div class="text-item-actions">
+                <button class="btn-edit-text" data-id="${txt.id}" title="Editar">✏</button>
+                <button class="btn-delete-text" data-id="${txt.id}" title="Eliminar">🗑</button>
+            </div>
+        `;
+        textsList.appendChild(div);
+    });
+
+    textsList.querySelectorAll('.btn-edit-text').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-id');
+            const textRecord = savedTexts.find((txt) => txt.id === id);
+            if (!textRecord) {
+                return;
+            }
+
+            editingTextId = id;
+            document.getElementById('textNameInput').value = textRecord.name;
+            document.getElementById('textContentInput').value = textRecord.content;
+            document.getElementById('textEditorPanel').style.display = 'flex';
+        });
+    });
+
+    textsList.querySelectorAll('.btn-delete-text').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const id = btn.getAttribute('data-id');
+            const textRecord = savedTexts.find((txt) => txt.id === id);
+            if (!textRecord) {
+                return;
+            }
+
+            if (confirm(`¿Eliminar el texto "${textRecord.name}"?`)) {
+                savedTexts = savedTexts.filter((txt) => txt.id !== id);
+                saveTexts();
+                renderTexts();
+            }
+        });
+    });
+}
 
 // --- RENDER JOURNEYS LIST ---
 function renderJourneys() {
@@ -378,16 +548,24 @@ function renderJourneys() {
         if (journey.steps && journey.steps.length > 0) {
             journey.steps.forEach((step, stepIdx) => {
                 const stepDiv = document.createElement('div');
-                stepDiv.className = 'step-item';
 
-                // Truncate selector for display
-                const selectorDisplay = step.selector ? (step.selector.length > 30 ? '...' + step.selector.slice(-30) : step.selector) : '';
+                if (step.stepType === 'paste_text') {
+                    stepDiv.className = 'step-item step-type-paste';
+                    stepDiv.innerHTML = `
+                        <span class="step-index">#${stepIdx + 1}</span>
+                        <span class="step-paste-badge">TEXTO</span>
+                        <span class="step-desc" title="${step.textName || 'Texto guardado'}">${step.textName || 'Texto guardado'}</span>
+                    `;
+                } else {
+                    const selectorDisplay = step.selector ? (step.selector.length > 30 ? '...' + step.selector.slice(-30) : step.selector) : '';
+                    stepDiv.className = 'step-item';
+                    stepDiv.innerHTML = `
+                        <span class="step-index">#${stepIdx + 1}</span>
+                        <span class="step-desc" title="${step.text || step.selector}">${step.text || 'Acción sin nombre'}</span>
+                        <span class="step-selector" title="${step.selector || ''}">${selectorDisplay}</span>
+                    `;
+                }
 
-                stepDiv.innerHTML = `
-                    <span class="step-index">#${stepIdx + 1}</span>
-                    <span class="step-desc" title="${step.text || step.selector}">${step.text || 'Acción sin nombre'}</span>
-                    <span class="step-selector" title="${step.selector || ''}">${selectorDisplay}</span>
-                `;
                 stepsContainer.appendChild(stepDiv);
             });
         } else {
@@ -464,18 +642,40 @@ async function playJourney(journey) {
         if (stopPlaybackFlag) break;
 
         const step = journey.steps[i];
-        playbackStepLabel.textContent = `Paso ${i + 1}/${journey.steps.length}: ${step.text}`;
+        if (step.stepType === 'paste_text') {
+            playbackStepLabel.textContent = `Paso ${i + 1}/${journey.steps.length}: [Texto] ${step.textName || 'Texto guardado'}`;
 
-        try {
-            await chrome.tabs.sendMessage(tab.id, {
-                action: "SIMULATE_CLICK",
-                id: step.aiRef,
-                selector: step.selector,
-                text: step.text,
-                locator: step.locator || null
-            });
-        } catch (e) {
-            playbackStepLabel.textContent = `⚠️ Error en paso ${i + 1}: elemento no encontrado`;
+            const textRecord = savedTexts.find((txt) => txt.id === step.textId);
+            if (!textRecord) {
+                playbackStepLabel.textContent = `⚠️ Paso ${i + 1}: texto "${step.textName || 'sin nombre'}" no encontrado`;
+                if (i < journey.steps.length - 1 && !stopPlaybackFlag) {
+                    await new Promise(resolve => setTimeout(resolve, PLAYBACK_DELAY_MS));
+                }
+                continue;
+            }
+
+            try {
+                await chrome.tabs.sendMessage(tab.id, {
+                    action: "PASTE_TEXT",
+                    text: textRecord.content
+                });
+            } catch (e) {
+                playbackStepLabel.textContent = `⚠️ Error en paso ${i + 1}: no se pudo pegar el texto`;
+            }
+        } else {
+            playbackStepLabel.textContent = `Paso ${i + 1}/${journey.steps.length}: ${step.text}`;
+
+            try {
+                await chrome.tabs.sendMessage(tab.id, {
+                    action: "SIMULATE_CLICK",
+                    id: step.aiRef,
+                    selector: step.selector,
+                    text: step.text,
+                    locator: step.locator || null
+                });
+            } catch (e) {
+                playbackStepLabel.textContent = `⚠️ Error en paso ${i + 1}: elemento no encontrado`;
+            }
         }
 
         if (i < journey.steps.length - 1 && !stopPlaybackFlag) {
@@ -730,6 +930,7 @@ function buildExportLocators(locator, selector, text, aiRef) {
  * @returns {boolean}
  */
 function stepIsPasteText(step) {
+    if (step.stepType === 'paste_text') return true;
     if (step.action === 'paste_text') return true;
     if (step.textToPaste || step.text_to_paste) return true;
     if (step.locator?.role === 'textbox') return true;
@@ -769,11 +970,20 @@ function buildExportPayload(journey, tabContext) {
             step.aiRef || ''
         );
 
+        let resolvedContent = null;
+        if (isPaste && step.stepType === 'paste_text' && step.textId) {
+            const textRecord = savedTexts.find((txt) => txt.id === step.textId);
+            resolvedContent = textRecord ? textRecord.content : null;
+        }
+
         return {
             index: index + 1,
             action: isPaste ? 'paste_text' : 'click',
-            description: step.text || `Paso ${index + 1}`,
-            text_to_paste: isPaste ? (step.textToPaste || step.text_to_paste || null) : null,
+            description: step.stepType === 'paste_text' ? `[Texto] ${step.textName || 'Texto guardado'}` : (step.text || `Paso ${index + 1}`),
+            text_to_paste: isPaste ? (resolvedContent || step.textToPaste || step.text_to_paste || null) : null,
+            text_ref: step.stepType === 'paste_text'
+                ? { id: step.textId || null, name: step.textName || null }
+                : null,
             locators,
             element_metadata: {
                 tag: step.locator?.tag || '',

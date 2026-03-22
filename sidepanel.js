@@ -316,6 +316,7 @@ async function startRecording() {
     btnRecord.classList.add('recording');
     recordingBar.classList.add('is-recording');
     document.getElementById('btnAddTextStep').classList.add('visible');
+    document.getElementById('btnAddKeyStep').classList.add('visible');
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab) {
@@ -329,7 +330,9 @@ async function stopRecording() {
     btnRecord.classList.remove('recording');
     recordingBar.classList.remove('is-recording');
     document.getElementById('btnAddTextStep').classList.remove('visible');
+    document.getElementById('btnAddKeyStep').classList.remove('visible');
     document.getElementById('textPickerPanel').style.display = 'none';
+    document.getElementById('keyPickerPanel').style.display = 'none';
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab) {
@@ -380,6 +383,107 @@ document.getElementById('btnAddTextStep').addEventListener('click', () => {
 
 document.getElementById('btnCloseTextPicker').addEventListener('click', () => {
     document.getElementById('textPickerPanel').style.display = 'none';
+});
+
+// --- KEY PICKER ---
+const KEY_GROUPS = [
+    {
+        label: 'Más usadas',
+        keys: [
+            { label: 'Enter', key: 'Enter', code: 'Enter', keyCode: 13 },
+            { label: 'Tab', key: 'Tab', code: 'Tab', keyCode: 9 },
+            { label: 'Esc', key: 'Escape', code: 'Escape', keyCode: 27 },
+            { label: 'Espacio', key: ' ', code: 'Space', keyCode: 32 },
+            { label: '⌫ Backspace', key: 'Backspace', code: 'Backspace', keyCode: 8 },
+            { label: 'Delete', key: 'Delete', code: 'Delete', keyCode: 46 },
+        ]
+    },
+    {
+        label: 'Navegación',
+        keys: [
+            { label: '↑', key: 'ArrowUp', code: 'ArrowUp', keyCode: 38 },
+            { label: '↓', key: 'ArrowDown', code: 'ArrowDown', keyCode: 40 },
+            { label: '←', key: 'ArrowLeft', code: 'ArrowLeft', keyCode: 37 },
+            { label: '→', key: 'ArrowRight', code: 'ArrowRight', keyCode: 39 },
+            { label: 'Home', key: 'Home', code: 'Home', keyCode: 36 },
+            { label: 'End', key: 'End', code: 'End', keyCode: 35 },
+            { label: 'PgUp', key: 'PageUp', code: 'PageUp', keyCode: 33 },
+            { label: 'PgDn', key: 'PageDown', code: 'PageDown', keyCode: 34 },
+        ]
+    },
+    {
+        label: 'Modificadores',
+        keys: [
+            { label: 'Ctrl+A', key: 'a', code: 'KeyA', keyCode: 65, ctrlKey: true },
+            { label: 'Ctrl+C', key: 'c', code: 'KeyC', keyCode: 67, ctrlKey: true },
+            { label: 'Ctrl+V', key: 'v', code: 'KeyV', keyCode: 86, ctrlKey: true },
+            { label: 'Ctrl+Z', key: 'z', code: 'KeyZ', keyCode: 90, ctrlKey: true },
+            { label: 'Ctrl+Enter', key: 'Enter', code: 'Enter', keyCode: 13, ctrlKey: true },
+            { label: 'Shift+Enter', key: 'Enter', code: 'Enter', keyCode: 13, shiftKey: true },
+            { label: 'Shift+Tab', key: 'Tab', code: 'Tab', keyCode: 9, shiftKey: true },
+        ]
+    },
+    {
+        label: 'Función',
+        keys: [
+            { label: 'F1', key: 'F1', code: 'F1', keyCode: 112 },
+            { label: 'F2', key: 'F2', code: 'F2', keyCode: 113 },
+            { label: 'F5', key: 'F5', code: 'F5', keyCode: 116 },
+            { label: 'F12', key: 'F12', code: 'F12', keyCode: 123 },
+        ]
+    }
+];
+
+function showKeyPicker() {
+    const panel = document.getElementById('keyPickerPanel');
+    const list = document.getElementById('keyPickerList');
+    list.innerHTML = '';
+    document.getElementById('textPickerPanel').style.display = 'none';
+
+    KEY_GROUPS.forEach(group => {
+        const label = document.createElement('div');
+        label.className = 'key-group-label';
+        label.textContent = group.label;
+        list.appendChild(label);
+
+        const grid = document.createElement('div');
+        grid.className = 'key-grid';
+
+        group.keys.forEach(keyDef => {
+            const chip = document.createElement('button');
+            chip.className = 'key-chip';
+            chip.textContent = keyDef.label;
+            chip.title = keyDef.key;
+            chip.addEventListener('click', () => {
+                recordedSteps.push({
+                    stepType: 'key_press',
+                    key: keyDef.key,
+                    code: keyDef.code,
+                    keyCode: keyDef.keyCode,
+                    ctrlKey: keyDef.ctrlKey || false,
+                    shiftKey: keyDef.shiftKey || false,
+                    altKey: keyDef.altKey || false,
+                    label: keyDef.label
+                });
+                updateRecStepCount();
+                panel.style.display = 'none';
+            });
+            grid.appendChild(chip);
+        });
+
+        list.appendChild(grid);
+    });
+
+    panel.style.display = 'flex';
+}
+
+document.getElementById('btnAddKeyStep').addEventListener('click', () => {
+    if (!isRecording) return;
+    showKeyPicker();
+});
+
+document.getElementById('btnCloseKeyPicker').addEventListener('click', () => {
+    document.getElementById('keyPickerPanel').style.display = 'none';
 });
 
 // --- JOURNEY PERSISTENCE ---
@@ -556,6 +660,13 @@ function renderJourneys() {
                         <span class="step-paste-badge">TEXTO</span>
                         <span class="step-desc" title="${step.textName || 'Texto guardado'}">${step.textName || 'Texto guardado'}</span>
                     `;
+                } else if (step.stepType === 'key_press') {
+                    stepDiv.className = 'step-item step-type-key';
+                    stepDiv.innerHTML = `
+                        <span class="step-index">#${stepIdx + 1}</span>
+                        <span class="step-key-badge">TECLA</span>
+                        <span class="step-key-label">${step.label || step.key}</span>
+                    `;
                 } else {
                     const selectorDisplay = step.selector ? (step.selector.length > 30 ? '...' + step.selector.slice(-30) : step.selector) : '';
                     stepDiv.className = 'step-item';
@@ -661,6 +772,21 @@ async function playJourney(journey) {
                 });
             } catch (e) {
                 playbackStepLabel.textContent = `⚠️ Error en paso ${i + 1}: no se pudo pegar el texto`;
+            }
+        } else if (step.stepType === 'key_press') {
+            playbackStepLabel.textContent = `Paso ${i + 1}/${journey.steps.length}: [Tecla] ${step.label || step.key}`;
+            try {
+                await chrome.tabs.sendMessage(tab.id, {
+                    action: "SIMULATE_KEY",
+                    key: step.key,
+                    code: step.code,
+                    keyCode: step.keyCode,
+                    ctrlKey: step.ctrlKey || false,
+                    shiftKey: step.shiftKey || false,
+                    altKey: step.altKey || false
+                });
+            } catch (e) {
+                playbackStepLabel.textContent = `⚠️ Error en paso ${i + 1}: no se pudo simular la tecla`;
             }
         } else {
             playbackStepLabel.textContent = `Paso ${i + 1}/${journey.steps.length}: ${step.text}`;
@@ -962,6 +1088,27 @@ function buildExportPayload(journey, tabContext) {
     }
 
     const steps = (journey.steps || []).map((step, index) => {
+        const isKey = step.stepType === 'key_press';
+
+        if (isKey) {
+            return {
+                index: index + 1,
+                action: 'key_press',
+                description: `[Tecla] ${step.label || step.key}`,
+                key: step.key,
+                code: step.code,
+                keyCode: step.keyCode,
+                modifiers: {
+                    ctrlKey: step.ctrlKey || false,
+                    shiftKey: step.shiftKey || false,
+                    altKey: step.altKey || false
+                },
+                locators: null,
+                element_metadata: null,
+                timing: { wait_before_ms: 0, wait_after_ms: 1500 }
+            };
+        }
+
         const isPaste = stepIsPasteText(step);
         const locators = buildExportLocators(
             step.locator || null,

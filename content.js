@@ -418,6 +418,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         pasteTextWithRetries(request.text).then(sendResponse);
     }
 
+    if (request.action === "SIMULATE_KEY") {
+        const result = simulateKeyPress({
+            key: request.key,
+            code: request.code,
+            keyCode: request.keyCode,
+            ctrlKey: request.ctrlKey || false,
+            shiftKey: request.shiftKey || false,
+            altKey: request.altKey || false
+        });
+        sendResponse(result);
+    }
+
     // ✅ NUEVO: Control directo de audio (play/pause/stop)
     if (request.action === "CONTROL_AUDIO") {
         const audioEl = request.aiRef
@@ -565,6 +577,30 @@ function simulateHumanClick(el) {
         });
         el.dispatchEvent(event);
     });
+}
+
+/**
+ * Simula la pulsación completa de una tecla (keydown + keypress + keyup)
+ * sobre el elemento activo o el documento.
+ */
+function simulateKeyPress({ key, code, keyCode, ctrlKey = false, shiftKey = false, altKey = false }) {
+    const target = getDeepActiveElement() || document.body;
+    const init = {
+        key,
+        code,
+        keyCode,
+        which: keyCode,
+        ctrlKey,
+        shiftKey,
+        altKey,
+        metaKey: false,
+        bubbles: true,
+        cancelable: true
+    };
+    ['keydown', 'keypress', 'keyup'].forEach(type => {
+        target.dispatchEvent(new KeyboardEvent(type, init));
+    });
+    return { status: 'key_simulated', key };
 }
 
 // ============================================================

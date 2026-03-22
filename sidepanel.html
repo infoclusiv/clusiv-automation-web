@@ -641,6 +641,18 @@
             display: inline-block;
         }
 
+        /* --- BOTÓN +TECLA EN BARRA DE GRABACIÓN --- */
+        #btnAddKeyStep {
+            background: #1a6fa8;
+            font-size: 10px;
+            padding: 5px 8px;
+            display: none;
+        }
+
+        #btnAddKeyStep.visible {
+            display: inline-block;
+        }
+
         /* --- PANEL PICKER DE TEXTOS --- */
         #textPickerPanel {
             position: absolute;
@@ -655,6 +667,111 @@
             max-height: 260px;
             display: flex;
             flex-direction: column;
+        }
+
+        /* --- PANEL PICKER DE TECLAS --- */
+        #keyPickerPanel {
+            position: absolute;
+            bottom: 60px;
+            left: 8px;
+            right: 8px;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+            z-index: 200;
+            max-height: 300px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .key-picker-header {
+            padding: 8px 12px;
+            background: #1a6fa8;
+            color: white;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .key-picker-header button {
+            background: transparent;
+            color: white;
+            font-size: 13px;
+            padding: 0 4px;
+        }
+
+        #keyPickerList {
+            overflow-y: auto;
+            flex: 1;
+            padding: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .key-group-label {
+            font-size: 10px;
+            font-weight: bold;
+            color: #888;
+            text-transform: uppercase;
+            padding: 4px 4px 2px;
+            letter-spacing: 0.5px;
+        }
+
+        .key-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-bottom: 4px;
+        }
+
+        .key-chip {
+            background: #f0f4f8;
+            border: 1px solid #ccd0d5;
+            border-radius: 5px;
+            padding: 5px 10px;
+            font-size: 11px;
+            font-weight: bold;
+            cursor: pointer;
+            color: #2c3e50;
+            min-width: 36px;
+            text-align: center;
+            transition: background 0.12s;
+        }
+
+        .key-chip:hover {
+            background: #d4e5f7;
+            border-color: #1a6fa8;
+            color: #1a6fa8;
+        }
+
+        /* --- PASO TIPO KEY_PRESS EN LISTA DE STEPS --- */
+        .step-item.step-type-key {
+            background: #e8f4fd;
+            border-left: 3px solid #1a6fa8;
+        }
+
+        .step-key-badge {
+            font-size: 9px;
+            background: #1a6fa8;
+            color: white;
+            border-radius: 3px;
+            padding: 1px 4px;
+            flex-shrink: 0;
+        }
+
+        .step-key-label {
+            font-family: monospace;
+            background: #dde9f5;
+            border: 1px solid #a8c8e8;
+            border-radius: 3px;
+            padding: 1px 5px;
+            font-size: 11px;
+            color: #1a5a8a;
         }
 
         .text-picker-header {
@@ -765,6 +882,7 @@
                 <button id="btnRecord">⏺ Grabar</button>
                 <span class="rec-step-count" id="recStepCount">0 pasos</span>
                 <button id="btnAddTextStep" title="Insertar texto guardado como paso">📝 +Texto</button>
+                <button id="btnAddKeyStep" title="Insertar pulsación de tecla como paso">⌨ +Tecla</button>
             </div>
             <div id="searchBar" class="search-bar">
                 <input type="text" id="searchInput" placeholder="🔍 Buscar elementos...">
@@ -809,6 +927,14 @@
                 <button id="btnCloseTextPicker">✕</button>
             </div>
             <div id="textPickerList"></div>
+        </div>
+
+        <div id="keyPickerPanel" style="display:none;">
+            <div class="key-picker-header">
+                <span>Seleccionar tecla a simular</span>
+                <button id="btnCloseKeyPicker">✕</button>
+            </div>
+            <div id="keyPickerList"></div>
         </div>
     </div>
 

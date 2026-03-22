@@ -128,8 +128,28 @@ async function executeJourney(journeyId, textToPaste) {
         for (let i = 0; i < journey.steps.length; i++) { 
             const step = journey.steps[i]; 
             
-            if (!sendStatusToPython("progress", `Ejecutando paso ${i + 1}/${journey.steps.length}: ${step.text}`, journeyId)) {
+            if (!sendStatusToPython("progress", `Ejecutando paso ${i + 1}/${journey.steps.length}: ${step.stepType === 'key_press' ? '[Tecla] ' + (step.label || step.key) : step.text}`, journeyId)) {
                 return;
+            }
+
+            // --- Paso tipo KEY_PRESS ---
+            if (step.stepType === 'key_press') {
+                try {
+                    await chrome.tabs.sendMessage(tab.id, {
+                        action: "SIMULATE_KEY",
+                        key: step.key,
+                        code: step.code,
+                        keyCode: step.keyCode,
+                        ctrlKey: step.ctrlKey || false,
+                        shiftKey: step.shiftKey || false,
+                        altKey: step.altKey || false
+                    });
+                } catch (e) {
+                    sendStatusToPython("error", `Fallo de conexión al simular tecla en paso ${i + 1}.`, journeyId);
+                    return;
+                }
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                continue;
             }
             
             try { 

@@ -495,7 +495,9 @@ function loadJourneys() {
 }
 
 function saveJourneys() {
-    chrome.storage.local.set({ savedJourneys });
+    chrome.storage.local.set({ savedJourneys }, () => {
+        sendJourneysToPython();
+    });
 }
 
 loadJourneys();
@@ -680,6 +682,7 @@ function renderJourneys() {
                 <span>${journey.steps.length} pasos · ${journey.createdAt}</span>
             </div>
             <div class="journey-actions">
+                <button class="btn-edit-journey" data-index="${index}" title="Editar titulo">✏</button>
                 <button class="btn-play-journey" data-index="${index}" title="Reproducir">▶</button>
                 <button class="btn-export-journey" data-index="${index}" title="Exportar JSON">⬇</button>
                 <button class="btn-delete-journey" data-index="${index}" title="Eliminar">🗑</button>
@@ -740,6 +743,14 @@ function renderJourneys() {
         journeysList.appendChild(wrapper);
     });
 
+    journeysList.querySelectorAll('.btn-edit-journey').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = parseInt(btn.getAttribute('data-index'), 10);
+            renameJourney(idx);
+        });
+    });
+
     // Play buttons
     journeysList.querySelectorAll('.btn-play-journey').forEach(btn => {
         btn.addEventListener('click', (e) => {
@@ -771,6 +782,32 @@ function renderJourneys() {
             }
         });
     });
+}
+
+function renameJourney(index) {
+    const journey = savedJourneys[index];
+    if (!journey) {
+        return;
+    }
+
+    const nextName = prompt('Editar titulo del journey:', journey.name);
+    if (nextName === null) {
+        return;
+    }
+
+    const trimmedName = nextName.trim();
+    if (!trimmedName) {
+        alert('El titulo no puede estar vacio.');
+        return;
+    }
+
+    if (trimmedName === journey.name) {
+        return;
+    }
+
+    journey.name = trimmedName;
+    saveJourneys();
+    renderJourneys();
 }
 
 // --- PLAYBACK ---

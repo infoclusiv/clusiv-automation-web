@@ -382,6 +382,7 @@ async function startRecording() {
     recordingBar.classList.add('is-recording');
     document.getElementById('btnAddTextStep').classList.add('visible');
     document.getElementById('btnAddKeyStep').classList.add('visible');
+    document.getElementById('btnAddWaitStep').classList.add('visible');
 
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (tab) {
@@ -396,6 +397,7 @@ async function stopRecording() {
     recordingBar.classList.remove('is-recording');
     document.getElementById('btnAddTextStep').classList.remove('visible');
     document.getElementById('btnAddKeyStep').classList.remove('visible');
+    document.getElementById('btnAddWaitStep').classList.remove('visible');
     document.getElementById('textPickerPanel').style.display = 'none';
     document.getElementById('keyPickerPanel').style.display = 'none';
 
@@ -549,6 +551,26 @@ document.getElementById('btnAddKeyStep').addEventListener('click', () => {
 
 document.getElementById('btnCloseKeyPicker').addEventListener('click', () => {
     document.getElementById('keyPickerPanel').style.display = 'none';
+});
+
+// --- WAIT STEP ---
+document.getElementById('btnAddWaitStep').addEventListener('click', () => {
+    if (!isRecording) return;
+    const secondsStr = prompt('¿Cuántos segundos deseas esperar?', '5');
+    if (!secondsStr) return;
+
+    const seconds = parseFloat(secondsStr);
+    if (isNaN(seconds) || seconds <= 0) {
+        alert('Por favor ingresa un número válido mayor a 0.');
+        return;
+    }
+
+    recordedSteps.push({
+        stepType: 'wait',
+        durationMs: seconds * 1000,
+        label: `Esperar ${seconds} segundos`
+    });
+    updateRecStepCount();
 });
 
 // --- JOURNEY PERSISTENCE ---
@@ -763,6 +785,13 @@ function renderJourneys() {
                         <span class="step-index">#${stepIdx + 1}</span>
                         <span class="step-key-badge">TECLA</span>
                         <span class="step-key-label">${step.label || step.key}</span>
+                    `;
+                } else if (step.stepType === 'wait') {
+                    stepDiv.className = 'step-item step-type-wait';
+                    stepDiv.innerHTML = `
+                        <span class="step-index">#${stepIdx + 1}</span>
+                        <span class="step-wait-badge">ESPERA</span>
+                        <span class="step-desc">${step.label}</span>
                     `;
                 } else {
                     const selectorDisplay = step.selector ? (step.selector.length > 30 ? '...' + step.selector.slice(-30) : step.selector) : '';
@@ -1206,6 +1235,18 @@ function buildExportPayload(journey, tabContext) {
                 locators: null,
                 element_metadata: null,
                 timing: { wait_before_ms: 0, wait_after_ms: 1500 }
+            };
+        }
+
+        const isWait = step.stepType === 'wait';
+        if (isWait) {
+            return {
+                index: index + 1,
+                action: 'wait',
+                description: step.label,
+                timing: { wait_before_ms: 0, wait_after_ms: step.durationMs },
+                locators: null,
+                element_metadata: null
             };
         }
 

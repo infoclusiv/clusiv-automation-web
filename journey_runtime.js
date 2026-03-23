@@ -210,6 +210,10 @@
             return `[Texto] ${step.textName || fallback}`;
         }
 
+        if (step.stepType === 'wait') {
+            return step.label || `[Espera] ${step.durationMs / 1000}s`;
+        }
+
         return step.text || fallback;
     }
 
@@ -257,6 +261,12 @@
 
             const step = plan.steps[i];
             onStepStart(step, i, plan.steps.length);
+
+            if (step.stepType === 'wait') {
+                await wait(step.durationMs || 1000);
+                onStepSuccess(step, i, plan.steps.length);
+                continue;
+            }
 
             if (step.stepType === 'key_press') {
                 try {

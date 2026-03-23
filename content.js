@@ -1148,6 +1148,14 @@ function validateExecutionStep(step) {
         };
     }
 
+    if (step.stepType === 'wait') {
+        return {
+            status: 'ok',
+            code: 'wait_ready',
+            message: 'El paso de espera no requiere validación del DOM.'
+        };
+    }
+
     if (step.stepType === 'paste_text') {
         const editable = findEditableCandidate();
         if (!editable) {

@@ -676,6 +676,34 @@
             display: inline-block;
         }
 
+        /* --- BOTÓN +TIEMPO EN BARRA DE GRABACIÓN --- */
+        #btnAddWaitStep {
+            background: #f39c12;
+            font-size: 10px;
+            padding: 5px 8px;
+            display: none;
+            color: white;
+        }
+
+        #btnAddWaitStep.visible {
+            display: inline-block;
+        }
+
+        /* --- PASO TIPO WAIT EN LISTA DE STEPS --- */
+        .step-item.step-type-wait {
+            background: #fdf5e6;
+            border-left: 3px solid #f39c12;
+        }
+
+        .step-wait-badge {
+            font-size: 9px;
+            background: #f39c12;
+            color: white;
+            border-radius: 3px;
+            padding: 1px 4px;
+            flex-shrink: 0;
+        }
+
         /* --- PANEL PICKER DE TEXTOS --- */
         #textPickerPanel {
             position: absolute;
@@ -908,6 +936,7 @@
                 <span class="rec-step-count" id="recStepCount">0 pasos</span>
                 <button id="btnAddTextStep" title="Insertar texto guardado como paso">📝 +Texto</button>
                 <button id="btnAddKeyStep" title="Insertar pulsación de tecla como paso">⌨ +Tecla</button>
+                <button id="btnAddWaitStep" title="Insertar tiempo de espera">⏳ +Tiempo</button>
             </div>
             <div id="searchBar" class="search-bar">
                 <input type="text" id="searchInput" placeholder="🔍 Buscar elementos...">

@@ -30,6 +30,17 @@
             font-size: 16px;
         }
 
+        .backend-status {
+            margin-bottom: 10px;
+            padding: 7px 10px;
+            border-radius: 999px;
+            background: #eef3f8;
+            color: #3a5166;
+            font-size: 11px;
+            text-align: center;
+            font-weight: 600;
+        }
+
         .controls {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -862,6 +873,7 @@
 <body>
     <div class="header">
         <h3>🤖 Analista Web AI Pro</h3>
+        <div id="backendStatus" class="backend-status">Backend: reconectando...</div>
         <div class="controls">
             <button id="btnAnalizar">📸 Escanear Manual</button>
             <div class="auto-scan-container">
@@ -954,6 +966,7 @@
         ▶ Reproduciendo: <span class="step-label" id="playbackStepLabel">...</span>
         <button id="btnStopPlayback">⏹ Detener</button>
     </div>
+    <script src="journey_runtime.js"></script>
     <script src="sidepanel.js"></script>
 </body>
 

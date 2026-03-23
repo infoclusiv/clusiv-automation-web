@@ -11,6 +11,7 @@ const chatInput = document.getElementById('chatInput');
 const btnSend = document.getElementById('btnSend');
 const searchInput = document.getElementById('searchInput');
 const searchBar = document.getElementById('searchBar');
+const backendStatus = document.getElementById('backendStatus');
 
 // --- RECORDING / PLAYBACK REFS ---
 const btnRecord = document.getElementById('btnRecord');
@@ -34,6 +35,32 @@ let stopPlaybackFlag = false;
 const PLAYBACK_DELAY_MS = 1000;
 let editingTextId = null;
 let externalVariables = {};
+
+renderBackendStatus({
+    controlConnected: false,
+    templateConnected: false,
+    isConnecting: true,
+    isTemplateConnecting: true
+});
+
+chrome.runtime.sendMessage({ action: 'GET_BACKEND_STATUS' }, (response) => {
+    if (chrome.runtime.lastError || !response) {
+        return;
+    }
+    renderBackendStatus(response);
+});
+
+function renderBackendStatus(state) {
+    const control = state.controlConnected ? 'principal conectado' : 'principal desconectado';
+    const template = state.templateConnected ? 'variables conectadas' : 'variables desconectadas';
+    let suffix = '';
+
+    if (!state.controlConnected && state.isConnecting) {
+        suffix = ' · reconectando';
+    }
+
+    backendStatus.textContent = `Backend: ${control} | ${template}${suffix}`;
+}
 
 // --- CONFIGURACIÓN ---
 chrome.storage.local.get(['apiKey', 'modelId'], (res) => {
@@ -108,6 +135,9 @@ chrome.runtime.onMessage.addListener((request) => {
     if (request.action === "AUTO_UPDATE_MAP" && request.map) {
         lastAnalysisData = request.map;
         renderMap(request.map);
+    }
+    if (request.action === 'BACKEND_STATUS_UPDATED' && request.state) {
+        renderBackendStatus(request.state);
     }
     if (request.action === "RECORD_USER_ACTION" && isRecording) {
         const { aiRef, text, selector, locator } = request.data;
@@ -524,18 +554,7 @@ function loadExternalVariables() {
 }
 
 function resolveTemplateVariables(content) {
-    if (!content || typeof content !== 'string') {
-        return content;
-    }
-
-    return content.replace(/\[([A-Z0-9_]+)\]/g, (match, variableName) => {
-        const value = externalVariables[variableName];
-        if (typeof value === 'string' || typeof value === 'number') {
-            return String(value);
-        }
-
-        return match;
-    });
+    return ClusivJourneyRuntime.resolveTemplateVariables(content, externalVariables).content;
 }
 
 loadExternalVariables();
@@ -829,64 +848,34 @@ async function playJourney(journey) {
 
     await loadExternalVariables();
 
-    for (let i = 0; i < journey.steps.length; i++) {
-        if (stopPlaybackFlag) break;
+    const plan = ClusivJourneyRuntime.buildJourneyExecutionPlan({
+        journey,
+        savedTexts,
+        externalVariables
+    });
 
-        const step = journey.steps[i];
-        if (step.stepType === 'paste_text') {
-            playbackStepLabel.textContent = `Paso ${i + 1}/${journey.steps.length}: [Texto] ${step.textName || 'Texto guardado'}`;
+    if (plan.hasBlockingIssues) {
+        playbackStepLabel.textContent = `⚠️ ${ClusivJourneyRuntime.summarizeBlockingIssues(plan.issues)}`;
+        playbackOverlay.classList.remove('active');
+        isPlaying = false;
+        return;
+    }
 
-            const textRecord = savedTexts.find((txt) => txt.id === step.textId);
-            if (!textRecord) {
-                playbackStepLabel.textContent = `⚠️ Paso ${i + 1}: texto "${step.textName || 'sin nombre'}" no encontrado`;
-                if (i < journey.steps.length - 1 && !stopPlaybackFlag) {
-                    await new Promise(resolve => setTimeout(resolve, PLAYBACK_DELAY_MS));
-                }
-                continue;
-            }
-
-            try {
-                await chrome.tabs.sendMessage(tab.id, {
-                    action: "PASTE_TEXT",
-                    text: resolveTemplateVariables(textRecord.content)
-                });
-            } catch (e) {
-                playbackStepLabel.textContent = `⚠️ Error en paso ${i + 1}: no se pudo pegar el texto`;
-            }
-        } else if (step.stepType === 'key_press') {
-            playbackStepLabel.textContent = `Paso ${i + 1}/${journey.steps.length}: [Tecla] ${step.label || step.key}`;
-            try {
-                await chrome.tabs.sendMessage(tab.id, {
-                    action: "SIMULATE_KEY",
-                    key: step.key,
-                    code: step.code,
-                    keyCode: step.keyCode,
-                    ctrlKey: step.ctrlKey || false,
-                    shiftKey: step.shiftKey || false,
-                    altKey: step.altKey || false
-                });
-            } catch (e) {
-                playbackStepLabel.textContent = `⚠️ Error en paso ${i + 1}: no se pudo simular la tecla`;
-            }
-        } else {
-            playbackStepLabel.textContent = `Paso ${i + 1}/${journey.steps.length}: ${step.text}`;
-
-            try {
-                await chrome.tabs.sendMessage(tab.id, {
-                    action: "SIMULATE_CLICK",
-                    id: step.aiRef,
-                    selector: step.selector,
-                    text: step.text,
-                    locator: step.locator || null
-                });
-            } catch (e) {
-                playbackStepLabel.textContent = `⚠️ Error en paso ${i + 1}: elemento no encontrado`;
-            }
+    const executionResult = await ClusivJourneyRuntime.executeJourneyPlan({
+        plan,
+        sendToTab: (payload) => chrome.tabs.sendMessage(tab.id, payload),
+        shouldStop: () => stopPlaybackFlag,
+        betweenStepDelayMs: PLAYBACK_DELAY_MS,
+        finalTextDelayMs: PLAYBACK_DELAY_MS,
+        onStepStart: (step, stepIndex, totalSteps) => {
+            playbackStepLabel.textContent = `Paso ${stepIndex + 1}/${totalSteps}: ${ClusivJourneyRuntime.getStepDisplayLabel(step)}`;
         }
+    });
 
-        if (i < journey.steps.length - 1 && !stopPlaybackFlag) {
-            await new Promise(resolve => setTimeout(resolve, PLAYBACK_DELAY_MS));
-        }
+    if (executionResult.status === 'error') {
+        playbackStepLabel.textContent = `⚠️ ${executionResult.message}`;
+    } else if (executionResult.status === 'stopped') {
+        playbackStepLabel.textContent = '⏹ Reproducción detenida';
     }
 
     playbackOverlay.classList.remove('active');

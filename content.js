@@ -482,6 +482,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse(result);
     }
 
+    if (request.action === 'VALIDATE_EXECUTION_PLAN') {
+        const steps = Array.isArray(request.steps) ? request.steps : [];
+        const validations = steps.map((step, index) => ({
+            stepIndex: typeof step.stepIndex === 'number' ? step.stepIndex : index,
+            stepType: step.stepType || 'click',
+            ...validateExecutionStep(step)
+        }));
+        const hasErrors = validations.some((validation) => validation.status !== 'ok');
+
+        sendResponse({
+            status: hasErrors ? 'error' : 'ok',
+            siteReady: !hasErrors,
+            page: {
+                url: window.location.href,
+                title: document.title
+            },
+            steps: validations
+        });
+        return true;
+    }
+
     // ✅ NUEVO: Control directo de audio (play/pause/stop)
     if (request.action === "CONTROL_AUDIO") {
         const audioEl = request.aiRef
@@ -1016,6 +1037,56 @@ async function clickWithRetries(request, maxAttempts = 8) {
         await new Promise(resolve => setTimeout(resolve, 250));
     }
     return null;
+}
+
+function validateExecutionStep(step) {
+    if (!step || typeof step !== 'object') {
+        return {
+            status: 'error',
+            code: 'invalid_step',
+            message: 'El paso no tiene una estructura valida.'
+        };
+    }
+
+    if (step.stepType === 'key_press') {
+        return {
+            status: 'ok',
+            code: 'key_ready',
+            message: 'La simulacion de teclado esta disponible.'
+        };
+    }
+
+    if (step.stepType === 'paste_text') {
+        const editable = findEditableCandidate();
+        if (!editable) {
+            return {
+                status: 'error',
+                code: 'editable_not_found',
+                message: 'No se encontro un campo editable listo para insertar texto.'
+            };
+        }
+
+        return {
+            status: 'ok',
+            code: 'editable_ready',
+            message: 'Se encontro un campo editable para insertar texto.'
+        };
+    }
+
+    const targetElement = findTargetElement(step);
+    if (!targetElement) {
+        return {
+            status: 'error',
+            code: 'target_not_found',
+            message: 'No se encontro el elemento del paso en el DOM actual.'
+        };
+    }
+
+    return {
+        status: 'ok',
+        code: 'target_ready',
+        message: 'El elemento del paso esta disponible en el DOM.'
+    };
 }
 
 // ============================================================

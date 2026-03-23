@@ -15,6 +15,7 @@ let isTemplateConnecting = false;
 let externalVariablesCache = {};
 const CHATGPT_TAB_PATTERNS = ['https://chatgpt.com/*', 'https://chat.openai.com/*'];
 const CHATGPT_HOME_URL = 'https://chatgpt.com/';
+const KEEPALIVE_ALARM_NAME = 'keepAlive';
 const backendConnectionState = {
     controlConnected: false,
     templateConnected: false,
@@ -24,6 +25,12 @@ const backendConnectionState = {
 let preferredChatGptTabId = null;
 const WS_URL = 'ws://localhost:8765'; 
 const TEMPLATE_WS_URL = 'ws://localhost:8766';
+
+chrome.storage.session.get(['preferredChatGptTabId'], (res) => {
+    if (typeof res.preferredChatGptTabId === 'number') {
+        preferredChatGptTabId = res.preferredChatGptTabId;
+    }
+});
 
 chrome.storage.local.get(['externalVariables'], (res) => {
     externalVariablesCache = res.externalVariables || {};
@@ -62,6 +69,17 @@ function getBackendStatus() {
 function updateBackendConnectionState(partialState) {
     Object.assign(backendConnectionState, partialState);
     notifyBackendStatusUpdated();
+}
+
+function setPreferredChatGptTabId(tabId) {
+    preferredChatGptTabId = typeof tabId === 'number' ? tabId : null;
+
+    if (preferredChatGptTabId !== null) {
+        chrome.storage.session.set({ preferredChatGptTabId });
+        return;
+    }
+
+    chrome.storage.session.remove('preferredChatGptTabId');
 }
 
 function sendControlMessage(payload) {
@@ -182,17 +200,23 @@ function connectWebSocket() {
         try { 
             const msg = JSON.parse(event.data); 
 
+            if (msg.action === 'HEARTBEAT') {
+                sendControlMessage({ action: 'HEARTBEAT_ACK', ts: msg.ts || Date.now() });
+                return;
+            }
+
             // Python solicita actualizar la lista de Journeys 
             if (msg.action === "GET_JOURNEYS") { 
-                sendJourneysToPython(); 
+                sendJourneysToPython(msg.request_id || null); 
             } 
 
             if (msg.action === "PREPARE_CHATGPT_TAB") {
                 try {
-                    await prepareChatGptTab(msg.tab_url_patterns || CHATGPT_TAB_PATTERNS);
+                    await prepareChatGptTab(msg.tab_url_patterns || CHATGPT_TAB_PATTERNS, msg.request_id || null);
                 } catch (error) {
                     sendControlMessage({
                         action: 'CHATGPT_TAB_STATUS',
+                        request_id: msg.request_id || null,
                         status: 'error',
                         message: error.message || 'No se pudo preparar la pestaña de ChatGPT.'
                     });
@@ -201,6 +225,7 @@ function connectWebSocket() {
 
             if (msg.action === 'VALIDATE_JOURNEY' && msg.journey_id) {
                 await sendValidationResultToPython(msg.journey_id, {
+                    requestId: msg.request_id || null,
                     tabUrlPatterns: msg.tab_url_patterns || CHATGPT_TAB_PATTERNS
                 });
             }
@@ -208,6 +233,7 @@ function connectWebSocket() {
             // Python ordena ejecutar un Journey específico (y opcionalmente pegar texto al final) 
             if (msg.action === "RUN_JOURNEY" && msg.journey_id) { 
                 executeJourney(msg.journey_id, msg.paste_text_at_end, {
+                    executionId: msg.execution_id || null,
                     tabUrlPatterns: msg.tab_url_patterns || CHATGPT_TAB_PATTERNS
                 }); 
             } 
@@ -356,7 +382,7 @@ async function getPreferredChatGptTab(patterns) {
     try {
         const tab = await chrome.tabs.get(preferredChatGptTabId);
         if (!tab || !tab.url) {
-            preferredChatGptTabId = null;
+            setPreferredChatGptTabId(null);
             return null;
         }
 
@@ -366,18 +392,18 @@ async function getPreferredChatGptTab(patterns) {
         });
 
         if (!matchesPattern) {
-            preferredChatGptTabId = null;
+            setPreferredChatGptTabId(null);
             return null;
         }
 
         return tab;
     } catch (error) {
-        preferredChatGptTabId = null;
+        setPreferredChatGptTabId(null);
         return null;
     }
 }
 
-async function prepareChatGptTab(tabUrlPatterns = CHATGPT_TAB_PATTERNS) {
+async function prepareChatGptTab(tabUrlPatterns = CHATGPT_TAB_PATTERNS, requestId = null) {
     const patterns = Array.isArray(tabUrlPatterns) && tabUrlPatterns.length > 0
         ? tabUrlPatterns
         : CHATGPT_TAB_PATTERNS;
@@ -399,7 +425,7 @@ async function prepareChatGptTab(tabUrlPatterns = CHATGPT_TAB_PATTERNS) {
         message = 'Se abrió una nueva pestaña de ChatGPT.';
     }
 
-    preferredChatGptTabId = tab.id;
+    setPreferredChatGptTabId(tab.id);
 
     if (typeof tab.windowId === 'number') {
         await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {
@@ -409,9 +435,10 @@ async function prepareChatGptTab(tabUrlPatterns = CHATGPT_TAB_PATTERNS) {
     await chrome.tabs.update(tab.id, { active: true });
     const readyTab = tab.status === 'complete' ? tab : await waitForTabComplete(tab.id);
 
-    preferredChatGptTabId = readyTab.id;
+    setPreferredChatGptTabId(readyTab.id);
     sendControlMessage({
         action: 'CHATGPT_TAB_STATUS',
+        request_id: requestId,
         status,
         tab_id: readyTab.id,
         url: readyTab.url,
@@ -437,7 +464,7 @@ async function resolveTargetTab(tabUrlPatterns = []) {
     if (patterns.length > 0) {
         const matchingTab = await findTargetTabByPatterns(patterns);
         if (matchingTab) {
-            preferredChatGptTabId = matchingTab.id;
+            setPreferredChatGptTabId(matchingTab.id);
             await chrome.tabs.update(matchingTab.id, { active: true });
             return matchingTab.status === 'complete'
                 ? matchingTab
@@ -450,7 +477,7 @@ async function resolveTargetTab(tabUrlPatterns = []) {
         return null;
     }
 
-    preferredChatGptTabId = activeTab.id;
+    setPreferredChatGptTabId(activeTab.id);
 
     return activeTab.status === 'complete'
         ? activeTab
@@ -540,6 +567,7 @@ async function sendValidationResultToPython(journeyId, options = {}) {
     const validation = await validateJourneyExecution(journeyId, options);
     sendControlMessage({
         action: 'EXECUTION_VALIDATION_RESULT',
+        request_id: options.requestId || null,
         journey_id: journeyId,
         status: validation.ok ? 'ok' : 'error',
         message: validation.message,
@@ -560,13 +588,19 @@ async function sendValidationResultToPython(journeyId, options = {}) {
 /** 
  * Lee los Journeys del storage local y los envía al servidor Python 
  */ 
-function sendJourneysToPython() { 
+function sendJourneysToPython(requestId = null) { 
     chrome.storage.local.get(['savedJourneys'], (res) => { 
         if (ws && ws.readyState === WebSocket.OPEN) { 
-            ws.send(JSON.stringify({ 
+            const payload = { 
                 action: "JOURNEYS_LIST", 
                 data: res.savedJourneys ||[] 
-            })); 
+            };
+
+            if (requestId) {
+                payload.request_id = requestId;
+            }
+
+            ws.send(JSON.stringify(payload)); 
         } 
     }); 
 } 
@@ -577,13 +611,15 @@ function sendJourneysToPython() {
  * @param {string} textToPaste - Texto opcional para pegar al final del journey 
  */ 
 async function executeJourney(journeyId, textToPaste, options = {}) { 
+    const executionId = options.executionId || null;
+
     const preparation = await getExecutionPreparation(journeyId, {
         ...options,
         textToPaste
     });
 
     if (!preparation.journey || !preparation.plan) {
-        sendStatusToPython("error", preparation.error || summarizeValidationIssues(preparation.issues || []), journeyId);
+        sendStatusToPython("error", preparation.error || summarizeValidationIssues(preparation.issues || []), journeyId, executionId);
         return;
     }
 
@@ -591,11 +627,11 @@ async function executeJourney(journeyId, textToPaste, options = {}) {
     const plan = preparation.plan;
 
     if (plan.hasBlockingIssues) {
-        sendStatusToPython("error", summarizeValidationIssues(plan.issues), journeyId);
+        sendStatusToPython("error", summarizeValidationIssues(plan.issues), journeyId, executionId);
         return;
     }
 
-    if (!sendStatusToPython("started", `Iniciando secuencia: ${journey.name} (${plan.steps.length} pasos)`, journeyId)) {
+    if (!sendStatusToPython("started", `Iniciando secuencia: ${journey.name} (${plan.steps.length} pasos)`, journeyId, executionId)) {
         return;
     }
 
@@ -607,12 +643,12 @@ async function executeJourney(journeyId, textToPaste, options = {}) {
             tab = await resolveTargetTab(options.tabUrlPatterns || CHATGPT_TAB_PATTERNS);
         }
     } catch (error) {
-        sendStatusToPython("error", error.message || "No se pudo preparar la pestaña objetivo.", journeyId);
+        sendStatusToPython("error", error.message || "No se pudo preparar la pestaña objetivo.", journeyId, executionId);
         return;
     }
 
     if (!tab) {
-        sendStatusToPython("error", "No se encontró una pestaña de ChatGPT lista para ejecutar el journey.", journeyId);
+        sendStatusToPython("error", "No se encontró una pestaña de ChatGPT lista para ejecutar el journey.", journeyId, executionId);
         return;
     }
 
@@ -625,7 +661,8 @@ async function executeJourney(journeyId, textToPaste, options = {}) {
             const statusSent = sendStatusToPython(
                 "progress",
                 `Ejecutando paso ${stepIndex + 1}/${totalSteps}: ${ClusivJourneyRuntime.getStepDisplayLabel(step)}`,
-                journeyId
+                journeyId,
+                executionId
             );
             if (!statusSent) {
                 shouldStopExecution = true;
@@ -638,25 +675,25 @@ async function executeJourney(journeyId, textToPaste, options = {}) {
     }
 
     if (executionResult.status === 'error') {
-        sendStatusToPython("error", executionResult.message || "El journey fallo durante la ejecucion.", journeyId);
+        sendStatusToPython("error", executionResult.message || "El journey fallo durante la ejecucion.", journeyId, executionId);
         return;
     }
 
     if (plan.finalText) {
-        if (!sendStatusToPython("paste_completed", "Script pegado correctamente", journeyId)) {
+        if (!sendStatusToPython("paste_completed", "Script pegado correctamente", journeyId, executionId)) {
             return;
         }
     }
 
-    sendStatusToPython("completed", `✅ Secuencia finalizada: ${journey.name}`, journeyId);
+    sendStatusToPython("completed", `✅ Secuencia finalizada: ${journey.name}`, journeyId, executionId);
 } 
 
 /** 
  * Función auxiliar para enviar estados a Python 
  */ 
-function sendStatusToPython(statusType, messageStr, journeyId = null) { 
+function sendStatusToPython(statusType, messageStr, journeyId = null, executionId = null) { 
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-        console.error("No se pudo enviar el estado al backend: WebSocket no disponible.", { statusType, journeyId });
+        console.error("No se pudo enviar el estado al backend: WebSocket no disponible.", { statusType, journeyId, executionId });
         return false;
     }
 
@@ -670,11 +707,15 @@ function sendStatusToPython(statusType, messageStr, journeyId = null) {
         payload.journey_id = journeyId;
     }
 
+    if (executionId) {
+        payload.execution_id = executionId;
+    }
+
     try {
         ws.send(JSON.stringify(payload));
         return true;
     } catch (error) {
-        console.error("No se pudo enviar el estado al backend.", { statusType, journeyId, error });
+        console.error("No se pudo enviar el estado al backend.", { statusType, journeyId, executionId, error });
         return false;
     }
 } 
@@ -693,6 +734,22 @@ chrome.runtime.onStartup.addListener(() => {
     connectWebSocket(); 
     connectTemplateWebSocket();
 }); 
+
+chrome.alarms.create(KEEPALIVE_ALARM_NAME, { periodInMinutes: 0.4 });
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name !== KEEPALIVE_ALARM_NAME) {
+        return;
+    }
+
+    if (!ws || ws.readyState === WebSocket.CLOSED) {
+        connectWebSocket();
+    }
+
+    if (!templateWs || templateWs.readyState === WebSocket.CLOSED) {
+        connectTemplateWebSocket();
+    }
+});
 
 // Iniciar conexión inmediatamente cuando se despierte el background script 
 connectWebSocket(); 

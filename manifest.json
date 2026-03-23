@@ -3,7 +3,7 @@
   "name": "Analista Web AI Pro",
   "version": "4.0",
   "description": "Analiza el DOM y chatea con la estructura usando OpenRouter.",
-  "permissions": ["sidePanel", "scripting", "activeTab", "storage", "tabs"],
+  "permissions": ["sidePanel", "scripting", "activeTab", "storage", "tabs", "alarms"],
   "side_panel": {
     "default_path": "sidepanel.html"
   },

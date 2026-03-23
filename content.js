@@ -86,6 +86,42 @@ function wait(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function countTextOccurrences(value, text) {
+    if (!value || !text) return 0;
+
+    let count = 0;
+    let searchIndex = 0;
+
+    while (true) {
+        const matchIndex = value.indexOf(text, searchIndex);
+        if (matchIndex === -1) {
+            return count;
+        }
+
+        count += 1;
+        searchIndex = matchIndex + text.length;
+    }
+}
+
+function didTextInsertionSucceed(beforeValue, afterValue, text) {
+    if (typeof afterValue !== 'string') {
+        return false;
+    }
+
+    if (afterValue === beforeValue) {
+        return false;
+    }
+
+    const beforeCount = countTextOccurrences(beforeValue || '', text);
+    const afterCount = countTextOccurrences(afterValue, text);
+
+    if (afterCount > beforeCount) {
+        return true;
+    }
+
+    return afterValue.includes(text);
+}
+
 function insertTextIntoElement(el, text) {
     el.focus({ preventScroll: false });
 
@@ -176,34 +212,50 @@ function insertTextIntoElement(el, text) {
 
 async function pasteTextWithRetries(text, attempts = 6, delayMs = 250) {
     let lastFailure = "No active element";
+    let insertedElement = null;
+    let beforeValue = null;
+    let inserted = false;
 
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-        const el = findEditableCandidate();
-        if (!el) {
-            lastFailure = "No active element";
-            await wait(delayMs);
-            continue;
+        if (!inserted) {
+            const el = findEditableCandidate();
+            if (!el) {
+                lastFailure = "No active element";
+                await wait(delayMs);
+                continue;
+            }
+
+            beforeValue = getEditableText(el);
+            if (beforeValue === null) {
+                lastFailure = "Active element is not editable";
+                await wait(delayMs);
+                continue;
+            }
+
+            inserted = insertTextIntoElement(el, text);
+            insertedElement = el;
+
+            if (!inserted) {
+                lastFailure = "Text could not be inserted into the active element";
+                return { status: "error", message: lastFailure };
+            }
+
+            await wait(50);
         }
 
-        const beforeValue = getEditableText(el);
-        if (beforeValue === null) {
-            lastFailure = "Active element is not editable";
-            await wait(delayMs);
-            continue;
-        }
+        const validationElement = insertedElement && document.contains(insertedElement)
+            ? insertedElement
+            : findEditableCandidate();
 
-        const inserted = insertTextIntoElement(el, text);
-        await wait(50);
-
-        const afterValue = getEditableText(el);
-        if (!inserted || afterValue === null) {
+        const afterValue = getEditableText(validationElement);
+        if (afterValue === null) {
             lastFailure = "Active element became unavailable";
             await wait(delayMs);
             continue;
         }
 
-        if (afterValue !== beforeValue && afterValue.includes(text)) {
-            lastFocusedEditable = el;
+        if (didTextInsertionSucceed(beforeValue, afterValue, text)) {
+            lastFocusedEditable = validationElement;
             return { status: "pasted" };
         }
 

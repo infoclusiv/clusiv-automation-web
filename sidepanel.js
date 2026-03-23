@@ -33,6 +33,7 @@ let isPlaying = false;
 let stopPlaybackFlag = false;
 const PLAYBACK_DELAY_MS = 1000;
 let editingTextId = null;
+let externalVariables = {};
 
 // --- CONFIGURACIÓN ---
 chrome.storage.local.get(['apiKey', 'modelId'], (res) => {
@@ -511,6 +512,46 @@ function saveTexts() {
 
 loadTexts();
 
+function loadExternalVariables() {
+    return new Promise((resolve) => {
+        chrome.storage.local.get(['externalVariables'], (res) => {
+            externalVariables = res.externalVariables || {};
+            resolve(externalVariables);
+        });
+    });
+}
+
+function resolveTemplateVariables(content) {
+    if (!content || typeof content !== 'string') {
+        return content;
+    }
+
+    return content.replace(/\[([A-Z0-9_]+)\]/g, (match, variableName) => {
+        const value = externalVariables[variableName];
+        if (typeof value === 'string' || typeof value === 'number') {
+            return String(value);
+        }
+
+        return match;
+    });
+}
+
+loadExternalVariables();
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local' || !changes.externalVariables) {
+        return;
+    }
+
+    externalVariables = changes.externalVariables.newValue || {};
+});
+
+chrome.runtime.onMessage.addListener((request) => {
+    if (request.action === 'EXTERNAL_VARIABLES_UPDATED') {
+        externalVariables = request.variables || {};
+    }
+});
+
 document.getElementById('btnNewText').addEventListener('click', () => {
     editingTextId = null;
     document.getElementById('textNameInput').value = '';
@@ -749,6 +790,8 @@ async function playJourney(journey) {
         return;
     }
 
+    await loadExternalVariables();
+
     for (let i = 0; i < journey.steps.length; i++) {
         if (stopPlaybackFlag) break;
 
@@ -768,7 +811,7 @@ async function playJourney(journey) {
             try {
                 await chrome.tabs.sendMessage(tab.id, {
                     action: "PASTE_TEXT",
-                    text: textRecord.content
+                    text: resolveTemplateVariables(textRecord.content)
                 });
             } catch (e) {
                 playbackStepLabel.textContent = `⚠️ Error en paso ${i + 1}: no se pudo pegar el texto`;

@@ -8,7 +8,42 @@ chrome.sidePanel
 // ========================================== 
 let ws = null; 
 let isConnecting = false; 
+let templateWs = null;
+let isTemplateConnecting = false;
+let externalVariablesCache = {};
 const WS_URL = 'ws://localhost:8765'; 
+const TEMPLATE_WS_URL = 'ws://localhost:8766';
+
+chrome.storage.local.get(['externalVariables'], (res) => {
+    externalVariablesCache = res.externalVariables || {};
+});
+
+function notifyExternalVariablesUpdated() {
+    chrome.runtime.sendMessage({
+        action: 'EXTERNAL_VARIABLES_UPDATED',
+        variables: externalVariablesCache
+    }).catch(() => {
+    });
+}
+
+function persistExternalVariables(incomingVariables, metadata = null, updatedAt = null) {
+    if (!incomingVariables || typeof incomingVariables !== 'object') {
+        return;
+    }
+
+    externalVariablesCache = {
+        ...externalVariablesCache,
+        ...incomingVariables
+    };
+
+    chrome.storage.local.set({
+        externalVariables: externalVariablesCache,
+        externalVariablesMetadata: metadata || null,
+        externalVariablesUpdatedAt: updatedAt || null
+    }, () => {
+        notifyExternalVariablesUpdated();
+    });
+}
 
 function connectWebSocket() { 
     if (ws || isConnecting) return; 
@@ -79,6 +114,47 @@ function connectWebSocket() {
         if (ws) ws.close(); 
     }; 
 } 
+
+function connectTemplateWebSocket() {
+    if (templateWs || isTemplateConnecting) return;
+    isTemplateConnecting = true;
+
+    console.log(`Intentando conectar a ${TEMPLATE_WS_URL} para variables externas...`);
+    templateWs = new WebSocket(TEMPLATE_WS_URL);
+
+    templateWs.onopen = () => {
+        console.log('🟢 Conectado exitosamente al bridge de variables externas.');
+        isTemplateConnecting = false;
+    };
+
+    templateWs.onmessage = async (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+
+            if (msg.action === 'SYNC_TEMPLATE_VARIABLES' && msg.variables) {
+                persistExternalVariables(
+                    msg.variables,
+                    msg.metadata || null,
+                    msg.updatedAt || null
+                );
+            }
+        } catch (error) {
+            console.error('Error procesando mensaje del WS de variables:', error);
+        }
+    };
+
+    templateWs.onclose = () => {
+        console.log('🔴 Desconectado del bridge de variables. Reintentando en 3s...');
+        templateWs = null;
+        isTemplateConnecting = false;
+        setTimeout(connectTemplateWebSocket, 3000);
+    };
+
+    templateWs.onerror = (error) => {
+        console.error('⚠️ Error en WebSocket de variables:', error);
+        if (templateWs) templateWs.close();
+    };
+}
 
 // ========================================== 
 // --- FUNCIONES DE COMUNICACIÓN Y EJECUCIÓN --- 
@@ -239,14 +315,17 @@ function sendStatusToPython(statusType, messageStr, journeyId = null) {
 // Mantener vivo el Service Worker respondiendo a eventos de instalación/activación 
 chrome.runtime.onInstalled.addListener(() => { 
     connectWebSocket(); 
+    connectTemplateWebSocket();
 }); 
 
 chrome.runtime.onStartup.addListener(() => { 
     connectWebSocket(); 
+    connectTemplateWebSocket();
 }); 
 
 // Iniciar conexión inmediatamente cuando se despierte el background script 
 connectWebSocket(); 
+connectTemplateWebSocket();
 
 // ==========================================
 // --- HANDLER DE MENSAJES INTERNOS (SIDEPANEL → BACKGROUND) ---
@@ -275,5 +354,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         });
 
         return true;
+    }
+
+    if (request.action === 'GET_EXTERNAL_VARIABLES') {
+        sendResponse({
+            variables: externalVariablesCache
+        });
+        return false;
     }
 });

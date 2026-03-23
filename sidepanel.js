@@ -891,9 +891,6 @@ async function playJourney(journey) {
 
     playbackOverlay.classList.remove('active');
     isPlaying = false;
-    if (!stopPlaybackFlag) {
-        alert(`✅ Secuencia "${journey.name}" completada.`);
-    }
 }
 
 btnStopPlayback.addEventListener('click', () => {

@@ -103,7 +103,26 @@ function countTextOccurrences(value, text) {
     }
 }
 
-function didTextInsertionSucceed(beforeValue, afterValue, text) {
+function isComplexRichTextEditor(el) {
+    if (!el) return false;
+    if (el.classList?.contains('ProseMirror')) return true;
+    if (el.classList?.contains('ql-editor')) return true;
+    if (el.closest?.('.tiptap')) return true;
+    if (el.closest?.('.DraftEditor-root')) return true;
+    if (el.closest?.('[data-lexical-editor]')) return true;
+
+    if (el.isContentEditable && el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT') {
+        return el.querySelector('p, div > span, [data-block]') !== null;
+    }
+
+    return false;
+}
+
+function didTextInsertionSucceed(beforeValue, afterValue, text, element = null) {
+    if (element && isComplexRichTextEditor(element)) {
+        return typeof afterValue === 'string';
+    }
+
     if (typeof afterValue !== 'string') {
         return false;
     }
@@ -128,6 +147,58 @@ function insertTextIntoElement(el, text) {
     let success = false;
 
     if (el.isContentEditable || el.getAttribute('role') === 'textbox') {
+        if (isComplexRichTextEditor(el)) {
+            const selection = window.getSelection();
+            if (selection) {
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                range.collapse(false);
+                selection.removeAllRanges();
+                selection.addRange(range);
+            }
+
+            const beforeInputEvt = new InputEvent('beforeinput', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertText',
+                data: text
+            });
+            const shouldContinue = el.dispatchEvent(beforeInputEvt);
+
+            if (shouldContinue) {
+                try {
+                    success = document.execCommand('insertText', false, text);
+                } catch (e) { }
+
+                if (!success) {
+                    const richSelection = window.getSelection();
+                    if (richSelection && richSelection.rangeCount > 0) {
+                        const range = richSelection.getRangeAt(0);
+                        range.deleteContents();
+                        const textNode = document.createTextNode(text);
+                        range.insertNode(textNode);
+                        range.setStartAfter(textNode);
+                        range.setEndAfter(textNode);
+                        richSelection.removeAllRanges();
+                        richSelection.addRange(range);
+                        success = true;
+                    }
+                }
+            }
+
+            if (success) {
+                el.dispatchEvent(new InputEvent('input', {
+                    bubbles: true,
+                    cancelable: false,
+                    inputType: 'insertText',
+                    data: text
+                }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+
+            return success;
+        }
+
         const selection = window.getSelection();
         if (selection) {
             const range = document.createRange();
@@ -240,7 +311,7 @@ async function pasteTextWithRetries(text, attempts = 6, delayMs = 250) {
                 return { status: "error", message: lastFailure };
             }
 
-            await wait(50);
+            await wait(isComplexRichTextEditor(el) ? 150 : 50);
         }
 
         const validationElement = insertedElement && document.contains(insertedElement)
@@ -254,13 +325,24 @@ async function pasteTextWithRetries(text, attempts = 6, delayMs = 250) {
             continue;
         }
 
-        if (didTextInsertionSucceed(beforeValue, afterValue, text)) {
+        if (didTextInsertionSucceed(beforeValue, afterValue, text, validationElement)) {
             lastFocusedEditable = validationElement;
             return { status: "pasted" };
         }
 
+        if (inserted && insertedElement && isComplexRichTextEditor(insertedElement)) {
+            lastFailure = "Rich text editor validation pending";
+            await wait(delayMs * 2);
+            continue;
+        }
+
         lastFailure = "Text was not inserted into the expected field";
         await wait(delayMs);
+    }
+
+    if (inserted && insertedElement && isComplexRichTextEditor(insertedElement)) {
+        lastFocusedEditable = insertedElement;
+        return { status: "pasted" };
     }
 
     return { status: "error", message: lastFailure };
@@ -657,7 +739,17 @@ function simulateHumanClick(el) {
  * sobre el elemento activo o el documento.
  */
 function simulateKeyPress({ key, code, keyCode, ctrlKey = false, shiftKey = false, altKey = false }) {
-    const target = getDeepActiveElement() || document.body;
+    const activeElement = getDeepActiveElement();
+    const target = isEditableElement(activeElement)
+        ? activeElement
+        : (isEditableElement(lastFocusedEditable) && document.contains(lastFocusedEditable)
+            ? lastFocusedEditable
+            : (activeElement || document.body));
+
+    if (typeof target.focus === 'function') {
+        target.focus({ preventScroll: false });
+    }
+
     const init = {
         key,
         code,

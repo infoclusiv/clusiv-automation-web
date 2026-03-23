@@ -3,6 +3,7 @@ chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true }) 
   .catch((error) => console.error(error)); 
 
+importScripts('debug_logger.js');
 importScripts('journey_runtime.js');
 
 // ========================================== 
@@ -84,32 +85,66 @@ function setPreferredChatGptTabId(tabId) {
 
 function sendControlMessage(payload) {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
+        ClusivLogger.error('control_message_send_skipped', {
+            reason: 'ws_unavailable',
+            action: payload?.action || null,
+            request_id: payload?.request_id || null,
+            execution_id: payload?.execution_id || null
+        });
         return false;
     }
 
     try {
         ws.send(JSON.stringify(payload));
+        ClusivLogger.debug('control_message_sent', {
+            action: payload.action || null,
+            request_id: payload.request_id || null,
+            execution_id: payload.execution_id || null,
+            journey_id: payload.journey_id || null
+        });
         return true;
     } catch (error) {
+        ClusivLogger.error('control_message_send_failed', {
+            action: payload?.action || null,
+            request_id: payload?.request_id || null,
+            execution_id: payload?.execution_id || null,
+            error: String(error)
+        });
         console.error('No se pudo enviar mensaje al backend.', { payload, error });
         return false;
     }
 }
 
-function sendTemplateSyncAck(updatedAt, variableNames = []) {
+function sendTemplateSyncAck(updatedAt, variableNames = [], requestId = null) {
     if (!updatedAt || !templateWs || templateWs.readyState !== WebSocket.OPEN) {
+        ClusivLogger.warning('template_sync_ack_skipped', {
+            updatedAt,
+            request_id: requestId,
+            template_ready_state: templateWs?.readyState ?? null
+        });
         return;
     }
 
-    templateWs.send(JSON.stringify({
+    const payload = {
         action: 'TEMPLATE_VARIABLES_SYNCED',
         updatedAt,
-        variableNames
-    }));
+        variableNames,
+        request_id: requestId
+    };
+
+    templateWs.send(JSON.stringify(payload));
+    ClusivLogger.debug('template_sync_ack_sent', {
+        updatedAt,
+        request_id: requestId,
+        variable_names: variableNames
+    });
 }
 
-function persistExternalVariables(incomingVariables, metadata = null, updatedAt = null) {
+function persistExternalVariables(incomingVariables, metadata = null, updatedAt = null, requestId = null) {
     if (!incomingVariables || typeof incomingVariables !== 'object') {
+        ClusivLogger.warning('external_variables_persist_skipped', {
+            reason: 'invalid_payload'
+        });
         return;
     }
 
@@ -123,8 +158,13 @@ function persistExternalVariables(incomingVariables, metadata = null, updatedAt 
         externalVariablesMetadata: metadata || null,
         externalVariablesUpdatedAt: updatedAt || null
     }, () => {
+        ClusivLogger.info('external_variables_persisted', {
+            variable_names: Object.keys(incomingVariables),
+            updatedAt,
+            request_id: requestId
+        });
         notifyExternalVariablesUpdated();
-        sendTemplateSyncAck(updatedAt, Object.keys(incomingVariables));
+        sendTemplateSyncAck(updatedAt, Object.keys(incomingVariables), requestId);
     });
 }
 
@@ -181,11 +221,13 @@ function connectWebSocket() {
     if (ws || isConnecting) return; 
     isConnecting = true; 
     notifyBackendStatusUpdated();
+    ClusivLogger.info('ws_control_connecting', { url: WS_URL });
     
     console.log(`Intentando conectar a ${WS_URL}...`); 
     ws = new WebSocket(WS_URL); 
 
     ws.onopen = () => { 
+        ClusivLogger.info('ws_control_connected', { url: WS_URL });
         console.log("🟢 Conectado exitosamente al Orquestador Python."); 
         isConnecting = false; 
         updateBackendConnectionState({
@@ -199,8 +241,15 @@ function connectWebSocket() {
     ws.onmessage = async (event) => { 
         try { 
             const msg = JSON.parse(event.data); 
+            ClusivLogger.debug('ws_message_received', {
+                action: msg.action || null,
+                request_id: msg.request_id || null,
+                execution_id: msg.execution_id || null,
+                journey_id: msg.journey_id || null
+            });
 
             if (msg.action === 'HEARTBEAT') {
+                ClusivLogger.debug('heartbeat_received', { ts: msg.ts || null });
                 sendControlMessage({ action: 'HEARTBEAT_ACK', ts: msg.ts || Date.now() });
                 return;
             }
@@ -214,6 +263,10 @@ function connectWebSocket() {
                 try {
                     await prepareChatGptTab(msg.tab_url_patterns || CHATGPT_TAB_PATTERNS, msg.request_id || null);
                 } catch (error) {
+                    ClusivLogger.error('prepare_chatgpt_tab_failed', {
+                        request_id: msg.request_id || null,
+                        error: error.message || String(error)
+                    });
                     sendControlMessage({
                         action: 'CHATGPT_TAB_STATUS',
                         request_id: msg.request_id || null,
@@ -232,6 +285,11 @@ function connectWebSocket() {
 
             // Python ordena ejecutar un Journey específico (y opcionalmente pegar texto al final) 
             if (msg.action === "RUN_JOURNEY" && msg.journey_id) { 
+                ClusivLogger.journey('run_journey_command_received', {
+                    journey_id: msg.journey_id,
+                    execution_id: msg.execution_id || null,
+                    request_id: msg.request_id || null
+                });
                 executeJourney(msg.journey_id, msg.paste_text_at_end, {
                     executionId: msg.execution_id || null,
                     tabUrlPatterns: msg.tab_url_patterns || CHATGPT_TAB_PATTERNS
@@ -262,11 +320,17 @@ function connectWebSocket() {
                 }); 
             } 
         } catch (error) { 
+            ClusivLogger.error('ws_message_processing_failed', { error: String(error) });
             console.error("Error procesando mensaje del WS:", error); 
         } 
     }; 
 
     ws.onclose = () => { 
+        ClusivLogger.warning('ws_control_disconnected', {
+            url: WS_URL,
+            willReconnect: true,
+            reconnectDelayMs: 3000
+        });
         console.log("🔴 Desconectado del servidor Python. Reintentando en 3s..."); 
         ws = null; 
         isConnecting = false; 
@@ -279,6 +343,7 @@ function connectWebSocket() {
     }; 
 
     ws.onerror = (error) => { 
+        ClusivLogger.error('ws_control_error', { url: WS_URL, error: String(error) });
         console.error("⚠️ Error en WebSocket:", error); 
         updateBackendConnectionState({
             controlConnected: false,
@@ -292,11 +357,13 @@ function connectTemplateWebSocket() {
     if (templateWs || isTemplateConnecting) return;
     isTemplateConnecting = true;
     notifyBackendStatusUpdated();
+    ClusivLogger.info('ws_template_connecting', { url: TEMPLATE_WS_URL });
 
     console.log(`Intentando conectar a ${TEMPLATE_WS_URL} para variables externas...`);
     templateWs = new WebSocket(TEMPLATE_WS_URL);
 
     templateWs.onopen = () => {
+        ClusivLogger.info('ws_template_connected', { url: TEMPLATE_WS_URL });
         console.log('🟢 Conectado exitosamente al bridge de variables externas.');
         isTemplateConnecting = false;
         updateBackendConnectionState({
@@ -308,20 +375,32 @@ function connectTemplateWebSocket() {
     templateWs.onmessage = async (event) => {
         try {
             const msg = JSON.parse(event.data);
+            ClusivLogger.debug('template_message_received', {
+                action: msg.action || null,
+                request_id: msg.request_id || null,
+                updatedAt: msg.updatedAt || null
+            });
 
             if (msg.action === 'SYNC_TEMPLATE_VARIABLES' && msg.variables) {
                 persistExternalVariables(
                     msg.variables,
                     msg.metadata || null,
-                    msg.updatedAt || null
+                    msg.updatedAt || null,
+                    msg.request_id || null
                 );
             }
         } catch (error) {
+            ClusivLogger.error('template_message_processing_failed', { error: String(error) });
             console.error('Error procesando mensaje del WS de variables:', error);
         }
     };
 
     templateWs.onclose = () => {
+        ClusivLogger.warning('ws_template_disconnected', {
+            url: TEMPLATE_WS_URL,
+            willReconnect: true,
+            reconnectDelayMs: 3000
+        });
         console.log('🔴 Desconectado del bridge de variables. Reintentando en 3s...');
         templateWs = null;
         isTemplateConnecting = false;
@@ -333,6 +412,7 @@ function connectTemplateWebSocket() {
     };
 
     templateWs.onerror = (error) => {
+        ClusivLogger.error('ws_template_error', { url: TEMPLATE_WS_URL, error: String(error) });
         console.error('⚠️ Error en WebSocket de variables:', error);
         updateBackendConnectionState({
             templateConnected: false,
@@ -408,6 +488,11 @@ async function prepareChatGptTab(tabUrlPatterns = CHATGPT_TAB_PATTERNS, requestI
         ? tabUrlPatterns
         : CHATGPT_TAB_PATTERNS;
 
+    ClusivLogger.info('prepare_chatgpt_tab_start', {
+        request_id: requestId,
+        patterns
+    });
+
     let tab = await getPreferredChatGptTab(patterns);
     let status = 'ready';
     let message = 'Usando pestaña existente de ChatGPT.';
@@ -436,6 +521,12 @@ async function prepareChatGptTab(tabUrlPatterns = CHATGPT_TAB_PATTERNS, requestI
     const readyTab = tab.status === 'complete' ? tab : await waitForTabComplete(tab.id);
 
     setPreferredChatGptTabId(readyTab.id);
+    ClusivLogger.info('prepare_chatgpt_tab_ready', {
+        request_id: requestId,
+        tab_id: readyTab.id,
+        url: readyTab.url,
+        status
+    });
     sendControlMessage({
         action: 'CHATGPT_TAB_STATUS',
         request_id: requestId,
@@ -565,6 +656,12 @@ async function validateJourneyExecution(journeyId, options = {}) {
 
 async function sendValidationResultToPython(journeyId, options = {}) {
     const validation = await validateJourneyExecution(journeyId, options);
+    ClusivLogger.info('validation_result_ready', {
+        journey_id: journeyId,
+        request_id: options.requestId || null,
+        status: validation.ok ? 'ok' : 'error',
+        issues: validation.issues?.length || 0
+    });
     sendControlMessage({
         action: 'EXECUTION_VALIDATION_RESULT',
         request_id: options.requestId || null,
@@ -600,8 +697,18 @@ function sendJourneysToPython(requestId = null) {
                 payload.request_id = requestId;
             }
 
+            ClusivLogger.info('journeys_list_sent', {
+                request_id: requestId,
+                count: payload.data.length
+            });
             ws.send(JSON.stringify(payload)); 
+            return;
         } 
+
+        ClusivLogger.warning('journeys_list_send_skipped', {
+            request_id: requestId,
+            reason: 'ws_unavailable'
+        });
     }); 
 } 
 
@@ -613,12 +720,23 @@ function sendJourneysToPython(requestId = null) {
 async function executeJourney(journeyId, textToPaste, options = {}) { 
     const executionId = options.executionId || null;
 
+    ClusivLogger.journey('execute_journey_start', {
+        journey_id: journeyId,
+        execution_id: executionId,
+        has_text_to_paste: Boolean(textToPaste)
+    });
+
     const preparation = await getExecutionPreparation(journeyId, {
         ...options,
         textToPaste
     });
 
     if (!preparation.journey || !preparation.plan) {
+        ClusivLogger.error('execute_journey_preparation_failed', {
+            journey_id: journeyId,
+            execution_id: executionId,
+            error: preparation.error || summarizeValidationIssues(preparation.issues || [])
+        });
         sendStatusToPython("error", preparation.error || summarizeValidationIssues(preparation.issues || []), journeyId, executionId);
         return;
     }
@@ -627,6 +745,11 @@ async function executeJourney(journeyId, textToPaste, options = {}) {
     const plan = preparation.plan;
 
     if (plan.hasBlockingIssues) {
+        ClusivLogger.error('execute_journey_blocked', {
+            journey_id: journeyId,
+            execution_id: executionId,
+            issues: plan.issues || []
+        });
         sendStatusToPython("error", summarizeValidationIssues(plan.issues), journeyId, executionId);
         return;
     }
@@ -643,14 +766,31 @@ async function executeJourney(journeyId, textToPaste, options = {}) {
             tab = await resolveTargetTab(options.tabUrlPatterns || CHATGPT_TAB_PATTERNS);
         }
     } catch (error) {
+        ClusivLogger.error('execute_journey_target_tab_failed', {
+            journey_id: journeyId,
+            execution_id: executionId,
+            error: error.message || String(error)
+        });
         sendStatusToPython("error", error.message || "No se pudo preparar la pestaña objetivo.", journeyId, executionId);
         return;
     }
 
     if (!tab) {
+        ClusivLogger.error('execute_journey_target_tab_missing', {
+            journey_id: journeyId,
+            execution_id: executionId
+        });
         sendStatusToPython("error", "No se encontró una pestaña de ChatGPT lista para ejecutar el journey.", journeyId, executionId);
         return;
     }
+
+    ClusivLogger.journey('execute_journey_target_tab_ready', {
+        journey_id: journeyId,
+        execution_id: executionId,
+        tab_id: tab.id,
+        url: tab.url || null,
+        step_count: plan.steps.length
+    });
 
     let shouldStopExecution = false;
     const executionResult = await ClusivJourneyRuntime.executeJourneyPlan({
@@ -658,6 +798,14 @@ async function executeJourney(journeyId, textToPaste, options = {}) {
         sendToTab: (payload) => chrome.tabs.sendMessage(tab.id, payload),
         shouldStop: () => shouldStopExecution,
         onStepStart: (step, stepIndex, totalSteps) => {
+            ClusivLogger.journey('journey_step_started', {
+                journey_id: journeyId,
+                execution_id: executionId,
+                step_index: stepIndex,
+                total_steps: totalSteps,
+                step_type: step.stepType || null,
+                label: ClusivJourneyRuntime.getStepDisplayLabel(step)
+            });
             const statusSent = sendStatusToPython(
                 "progress",
                 `Ejecutando paso ${stepIndex + 1}/${totalSteps}: ${ClusivJourneyRuntime.getStepDisplayLabel(step)}`,
@@ -665,16 +813,30 @@ async function executeJourney(journeyId, textToPaste, options = {}) {
                 executionId
             );
             if (!statusSent) {
+                ClusivLogger.error('journey_step_status_send_failed', {
+                    journey_id: journeyId,
+                    execution_id: executionId,
+                    step_index: stepIndex
+                });
                 shouldStopExecution = true;
             }
         }
     });
 
     if (executionResult.status === 'stopped') {
+        ClusivLogger.warning('execute_journey_stopped', {
+            journey_id: journeyId,
+            execution_id: executionId
+        });
         return;
     }
 
     if (executionResult.status === 'error') {
+        ClusivLogger.error('execute_journey_failed', {
+            journey_id: journeyId,
+            execution_id: executionId,
+            error: executionResult.message || 'El journey fallo durante la ejecucion.'
+        });
         sendStatusToPython("error", executionResult.message || "El journey fallo durante la ejecucion.", journeyId, executionId);
         return;
     }
@@ -685,6 +847,11 @@ async function executeJourney(journeyId, textToPaste, options = {}) {
         }
     }
 
+    ClusivLogger.journey('journey_execution_completed', {
+        journey_id: journeyId,
+        execution_id: executionId,
+        final_status: executionResult.status
+    });
     sendStatusToPython("completed", `✅ Secuencia finalizada: ${journey.name}`, journeyId, executionId);
 } 
 
@@ -693,6 +860,11 @@ async function executeJourney(journeyId, textToPaste, options = {}) {
  */ 
 function sendStatusToPython(statusType, messageStr, journeyId = null, executionId = null) { 
     if (!ws || ws.readyState !== WebSocket.OPEN) {
+        ClusivLogger.error('send_status_ws_unavailable', {
+            status: statusType,
+            journey_id: journeyId,
+            execution_id: executionId
+        });
         console.error("No se pudo enviar el estado al backend: WebSocket no disponible.", { statusType, journeyId, executionId });
         return false;
     }
@@ -713,8 +885,20 @@ function sendStatusToPython(statusType, messageStr, journeyId = null, executionI
 
     try {
         ws.send(JSON.stringify(payload));
+        ClusivLogger.journey('send_status_sent', {
+            status: statusType,
+            journey_id: journeyId,
+            execution_id: executionId,
+            message: messageStr
+        });
         return true;
     } catch (error) {
+        ClusivLogger.error('send_status_exception', {
+            status: statusType,
+            journey_id: journeyId,
+            execution_id: executionId,
+            error: String(error)
+        });
         console.error("No se pudo enviar el estado al backend.", { statusType, journeyId, executionId, error });
         return false;
     }
@@ -794,6 +978,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
     if (request.action === 'GET_BACKEND_STATUS') {
         sendResponse(getBackendStatus());
+        return false;
+    }
+
+    if (request.action === 'GET_DEBUG_LOGS') {
+        sendResponse({ logs: ClusivLogger.getBuffer() });
         return false;
     }
 });

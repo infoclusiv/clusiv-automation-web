@@ -410,5 +410,3 @@ export const ClusivJourneyRuntime = {
     summarizeBlockingIssues,
     executeJourneyPlan
 };
-
-globalThis.ClusivJourneyRuntime = ClusivJourneyRuntime;

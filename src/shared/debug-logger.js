@@ -63,7 +63,3 @@ export const ClusivLogger = {
     return sessionId;
   }
 };
-
-globalThis.ClusivLogger = ClusivLogger;
-
-export default ClusivLogger;

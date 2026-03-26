@@ -1,0 +1,1002 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            margin: 0;
+            background-color: #f8f9fa;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            font-size: 13px;
+            color: #333;
+        }
+
+        .header {
+            padding: 12px;
+            background: white;
+            border-bottom: 1px solid #ddd;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            z-index: 10;
+        }
+
+        h3 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+            text-align: center;
+            font-size: 16px;
+        }
+
+        .backend-status {
+            margin-bottom: 10px;
+            padding: 7px 10px;
+            border-radius: 999px;
+            background: #eef3f8;
+            color: #3a5166;
+            font-size: 11px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 5px;
+        }
+
+        #btnAnalizar {
+            background-color: #2980b9;
+            grid-column: span 2;
+            margin-bottom: 5px;
+        }
+
+        button {
+            padding: 8px 5px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: 600;
+            color: white;
+            font-size: 11px;
+        }
+
+        button:hover {
+            filter: brightness(0.9);
+        }
+
+        /* Estilo del Toggle Auto-Scan */
+        .auto-scan-container {
+            grid-column: span 2;
+            background: #fff;
+            border: 1px solid #ddd;
+            padding: 8px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #27ae60;
+        }
+
+        input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+        }
+
+        #btnLimpiar {
+            background-color: #7f8c8d;
+        }
+
+        #btnConfig {
+            background-color: #34495e;
+        }
+
+        #configPanel {
+            display: none;
+            padding: 15px;
+            background: #f1f1f1;
+            border-bottom: 1px solid #ddd;
+        }
+
+        #configPanel input {
+            width: 100%;
+            padding: 7px;
+            margin-bottom: 12px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        .tabs {
+            display: flex;
+            background: #e2e2e2;
+            border-bottom: 1px solid #ccc;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 10px;
+            text-align: center;
+            cursor: pointer;
+            color: #666;
+            font-weight: bold;
+        }
+
+        .tab.active {
+            background: white;
+            color: #2980b9;
+            border-bottom: 3px solid #2980b9;
+        }
+
+        #mainContent {
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        #viewLogs,
+        #viewChat {
+            display: none;
+            height: 100%;
+            flex-direction: column;
+        }
+
+        #viewLogs.active,
+        #viewChat.active {
+            display: flex;
+        }
+
+        .search-bar {
+            padding: 8px 12px;
+            background: #fff;
+            border-bottom: 1px solid #ddd;
+            display: none;
+        }
+
+        .search-bar input {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            outline: none;
+            font-size: 12px;
+            box-sizing: border-box;
+            transition: border-color 0.2s;
+        }
+
+        .search-bar input:focus {
+            border-color: #2980b9;
+            box-shadow: 0 0 0 2px rgba(41, 128, 185, 0.15);
+        }
+
+        #consoleLog {
+            flex: 1;
+            overflow-y: auto;
+            background: white;
+        }
+
+        .section-header {
+            background: #f1f3f5;
+            color: #444;
+            padding: 6px 12px;
+            font-weight: bold;
+            border-top: 1px solid #eee;
+            position: sticky;
+            top: 0;
+        }
+
+        .item {
+            padding: 8px 12px;
+            border-bottom: 1px solid #f1f1f1;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+        }
+
+        .item-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .item-info b {
+            display: block;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .selector {
+            color: #e67e22;
+            font-family: monospace;
+            font-size: 10px;
+        }
+
+        .btn-run {
+            background: #27ae60;
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-size: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        }
+
+        #chatBox {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            background: #fff;
+        }
+
+        .msg {
+            padding: 8px 12px;
+            border-radius: 8px;
+            max-width: 85%;
+            font-size: 12.5px;
+            line-height: 1.4;
+        }
+
+        .user {
+            align-self: flex-end;
+            background: #007bff;
+            color: white;
+        }
+
+        .ai {
+            align-self: flex-start;
+            background: #f1f0f0;
+            color: #222;
+            white-space: pre-wrap;
+        }
+
+        .chat-input-area {
+            padding: 10px;
+            background: white;
+            border-top: 1px solid #ddd;
+            display: flex;
+            gap: 5px;
+        }
+
+        #chatInput {
+            flex: 1;
+            border: 1px solid #ddd;
+            border-radius: 20px;
+            padding: 8px 15px;
+            outline: none;
+        }
+
+        #btnSend {
+            background: #007bff;
+            border-radius: 50%;
+            width: 35px;
+            height: 35px;
+        }
+
+        /* --- RECORDING BAR --- */
+        .recording-bar {
+            display: none;
+            padding: 8px 12px;
+            background: #fff;
+            border-bottom: 1px solid #ddd;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .recording-bar.active {
+            display: flex;
+        }
+
+        .recording-bar.is-recording {
+            background: #fff5f5;
+            border-bottom-color: #e74c3c;
+        }
+
+        #btnRecord {
+            background: #e74c3c;
+            font-size: 11px;
+            padding: 6px 12px;
+            flex-shrink: 0;
+        }
+
+        #btnRecord.recording {
+            animation: pulse-red 1s infinite;
+        }
+
+        @keyframes pulse-red {
+
+            0%,
+            100% {
+                box-shadow: 0 0 0 0 rgba(231, 76, 60, 0.5);
+            }
+
+            50% {
+                box-shadow: 0 0 0 6px rgba(231, 76, 60, 0);
+            }
+        }
+
+        .rec-step-count {
+            font-size: 11px;
+            color: #666;
+            flex: 1;
+        }
+
+        .rec-step-count.has-steps {
+            color: #e74c3c;
+            font-weight: 600;
+        }
+
+        /* --- JOURNEYS VIEW --- */
+        #viewJourneys {
+            display: none;
+            height: 100%;
+            flex-direction: column;
+            overflow-y: auto;
+            background: white;
+        }
+
+        #viewJourneys.active {
+            display: flex;
+        }
+
+        .journey-empty {
+            padding: 40px;
+            text-align: center;
+            color: #999;
+        }
+
+        .journey-item {
+            padding: 10px 12px;
+            border-bottom: 1px solid #f1f1f1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .journey-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .journey-info b {
+            display: block;
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .journey-info span {
+            font-size: 10px;
+            color: #999;
+        }
+
+        .journey-actions {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .btn-play-journey {
+            background: #2980b9;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-delete-journey {
+            background: #e74c3c;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-edit-journey {
+            background: #f39c12;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        }
+
+        .btn-export-journey {
+            background: #8e44ad;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        }
+
+        /* --- PLAYBACK OVERLAY --- */
+        .playback-overlay {
+            display: none;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(41, 128, 185, 0.95);
+            color: white;
+            padding: 10px 15px;
+            font-size: 12px;
+            z-index: 100;
+            text-align: center;
+        }
+
+        .playback-overlay.active {
+            display: block;
+        }
+
+        .playback-overlay .step-label {
+            font-weight: 600;
+        }
+
+        #btnStopPlayback {
+            background: #e74c3c;
+            margin-left: 10px;
+            padding: 4px 10px;
+            font-size: 10px;
+        }
+
+        /* --- JOURNEY STEPS LIST --- */
+        .steps-container {
+            display: none;
+            background: #fdfdfd;
+            border-bottom: 1px solid #f1f1f1;
+            padding: 5px 0;
+            margin-left: 20px;
+            border-left: 2px solid #ddd;
+        }
+
+        .step-item {
+            padding: 4px 8px;
+            font-size: 11px;
+            color: #555;
+            border-bottom: 1px solid #f9f9f9;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .step-index {
+            color: #999;
+            font-weight: bold;
+            min-width: 20px;
+        }
+
+        .step-desc {
+            flex: 1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .step-selector {
+            font-size: 9px;
+            color: #aaa;
+            font-family: monospace;
+            max-width: 100px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .btn-toggle-steps {
+            background: none;
+            border: none;
+            color: #666;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 0 5px;
+            width: 20px;
+            text-align: center;
+        }
+
+        /* --- VISTA TEXTOS --- */
+        #viewTexts {
+            display: none;
+            height: 100%;
+            flex-direction: column;
+            background: white;
+            overflow-y: auto;
+        }
+
+        #viewTexts.active {
+            display: flex;
+        }
+
+        .texts-toolbar {
+            padding: 8px 12px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #ddd;
+        }
+
+        .texts-toolbar button {
+            background: #27ae60;
+            font-size: 11px;
+            padding: 6px 12px;
+        }
+
+        #textEditorPanel {
+            padding: 10px 12px;
+            background: #f1f3f5;
+            border-bottom: 1px solid #ddd;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        #textNameInput {
+            padding: 7px 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 12px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        #textContentInput {
+            padding: 7px 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 12px;
+            width: 100%;
+            box-sizing: border-box;
+            min-height: 100px;
+            resize: vertical;
+            font-family: monospace;
+        }
+
+        .text-editor-actions {
+            display: flex;
+            gap: 6px;
+        }
+
+        .text-editor-actions button {
+            font-size: 11px;
+            padding: 6px 12px;
+        }
+
+        #btnCancelText {
+            background: #7f8c8d;
+        }
+
+        .text-item {
+            padding: 8px 12px;
+            border-bottom: 1px solid #f1f1f1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .text-item-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .text-item-info b {
+            display: block;
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .text-item-info span {
+            font-size: 10px;
+            color: #999;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: block;
+        }
+
+        .text-item-actions {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .btn-edit-text {
+            background: #2980b9;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+        }
+
+        .btn-delete-text {
+            background: #e74c3c;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+        }
+
+        /* --- BOTÓN +TEXTO EN BARRA DE GRABACIÓN --- */
+        #btnAddTextStep {
+            background: #8e44ad;
+            font-size: 10px;
+            padding: 5px 8px;
+            display: none;
+        }
+
+        #btnAddTextStep.visible {
+            display: inline-block;
+        }
+
+        /* --- BOTÓN +TECLA EN BARRA DE GRABACIÓN --- */
+        #btnAddKeyStep {
+            background: #1a6fa8;
+            font-size: 10px;
+            padding: 5px 8px;
+            display: none;
+        }
+
+        #btnAddKeyStep.visible {
+            display: inline-block;
+        }
+
+        /* --- BOTÓN +TIEMPO EN BARRA DE GRABACIÓN --- */
+        #btnAddWaitStep {
+            background: #f39c12;
+            font-size: 10px;
+            padding: 5px 8px;
+            display: none;
+            color: white;
+        }
+
+        #btnAddWaitStep.visible {
+            display: inline-block;
+        }
+
+        /* --- PASO TIPO WAIT EN LISTA DE STEPS --- */
+        .step-item.step-type-wait {
+            background: #fdf5e6;
+            border-left: 3px solid #f39c12;
+        }
+
+        .step-wait-badge {
+            font-size: 9px;
+            background: #f39c12;
+            color: white;
+            border-radius: 3px;
+            padding: 1px 4px;
+            flex-shrink: 0;
+        }
+
+        /* --- PANEL PICKER DE TEXTOS --- */
+        #textPickerPanel {
+            position: absolute;
+            bottom: 60px;
+            left: 8px;
+            right: 8px;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+            z-index: 200;
+            max-height: 260px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* --- PANEL PICKER DE TECLAS --- */
+        #keyPickerPanel {
+            position: absolute;
+            bottom: 60px;
+            left: 8px;
+            right: 8px;
+            background: white;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+            z-index: 200;
+            max-height: 300px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .key-picker-header {
+            padding: 8px 12px;
+            background: #1a6fa8;
+            color: white;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .key-picker-header button {
+            background: transparent;
+            color: white;
+            font-size: 13px;
+            padding: 0 4px;
+        }
+
+        #keyPickerList {
+            overflow-y: auto;
+            flex: 1;
+            padding: 6px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .key-group-label {
+            font-size: 10px;
+            font-weight: bold;
+            color: #888;
+            text-transform: uppercase;
+            padding: 4px 4px 2px;
+            letter-spacing: 0.5px;
+        }
+
+        .key-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-bottom: 4px;
+        }
+
+        .key-chip {
+            background: #f0f4f8;
+            border: 1px solid #ccd0d5;
+            border-radius: 5px;
+            padding: 5px 10px;
+            font-size: 11px;
+            font-weight: bold;
+            cursor: pointer;
+            color: #2c3e50;
+            min-width: 36px;
+            text-align: center;
+            transition: background 0.12s;
+        }
+
+        .key-chip:hover {
+            background: #d4e5f7;
+            border-color: #1a6fa8;
+            color: #1a6fa8;
+        }
+
+        /* --- PASO TIPO KEY_PRESS EN LISTA DE STEPS --- */
+        .step-item.step-type-key {
+            background: #e8f4fd;
+            border-left: 3px solid #1a6fa8;
+        }
+
+        .step-key-badge {
+            font-size: 9px;
+            background: #1a6fa8;
+            color: white;
+            border-radius: 3px;
+            padding: 1px 4px;
+            flex-shrink: 0;
+        }
+
+        .step-key-label {
+            font-family: monospace;
+            background: #dde9f5;
+            border: 1px solid #a8c8e8;
+            border-radius: 3px;
+            padding: 1px 5px;
+            font-size: 11px;
+            color: #1a5a8a;
+        }
+
+        .text-picker-header {
+            padding: 8px 12px;
+            background: #8e44ad;
+            color: white;
+            border-radius: 8px 8px 0 0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .text-picker-header button {
+            background: transparent;
+            color: white;
+            font-size: 13px;
+            padding: 0 4px;
+        }
+
+        #textPickerList {
+            overflow-y: auto;
+            flex: 1;
+        }
+
+        .text-picker-item {
+            padding: 9px 12px;
+            border-bottom: 1px solid #f1f1f1;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .text-picker-item:hover {
+            background: #f0e6fa;
+        }
+
+        .text-picker-item b {
+            display: block;
+            color: #6c3483;
+        }
+
+        .text-picker-item span {
+            color: #999;
+            font-size: 10px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            display: block;
+        }
+
+        .text-picker-empty {
+            padding: 20px;
+            text-align: center;
+            color: #999;
+            font-size: 12px;
+        }
+
+        /* --- PASO TIPO PASTE_TEXT EN LISTA DE STEPS --- */
+        .step-item.step-type-paste {
+            background: #f5eeff;
+            border-left: 3px solid #8e44ad;
+        }
+
+        .step-paste-badge {
+            font-size: 9px;
+            background: #8e44ad;
+            color: white;
+            border-radius: 3px;
+            padding: 1px 4px;
+            flex-shrink: 0;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h3>🤖 Analista Web AI Pro</h3>
+        <div id="backendStatus" class="backend-status">Backend: reconectando...</div>
+        <div class="controls">
+            <button id="btnAnalizar">📸 Escanear Manual</button>
+            <div class="auto-scan-container">
+                <input type="checkbox" id="chkAutoScan">
+                <label for="chkAutoScan">🔄 Auto-Escaneo Vivo</label>
+            </div>
+            <button id="btnLimpiar">🧹 Limpiar</button>
+            <button id="btnConfig">⚙️ Ajustes</button>
+            <button id="btnExportLogs" style="background:#6c3483; grid-column: span 2; font-size:11px;">📋 Exportar Logs Debug</button>
+        </div>
+    </div>
+
+    <div id="configPanel">
+        <label>API Key:</label>
+        <input type="password" id="apiKey" placeholder="OpenRouter API Key">
+        <label>Modelo:</label>
+        <input type="text" id="modelId" value="google/gemini-2.0-flash-001">
+        <button id="btnSaveConfig" style="background: #27ae60; width: 100%;">💾 Guardar</button>
+    </div>
+
+    <div class="tabs">
+        <div class="tab active" id="tabLogs">🗺️ Mapa DOM</div>
+        <div class="tab" id="tabChat">💬 Chat AI</div>
+        <div class="tab" id="tabJourneys">🎬 Journeys</div>
+        <div class="tab" id="tabTexts">📝 Textos</div>
+    </div>
+
+    <div id="mainContent">
+        <div id="viewLogs" class="active">
+            <div class="recording-bar" id="recordingBar">
+                <button id="btnRecord">⏺ Grabar</button>
+                <span class="rec-step-count" id="recStepCount">0 pasos</span>
+                <button id="btnAddTextStep" title="Insertar texto guardado como paso">📝 +Texto</button>
+                <button id="btnAddKeyStep" title="Insertar pulsación de tecla como paso">⌨ +Tecla</button>
+                <button id="btnAddWaitStep" title="Insertar tiempo de espera">⏳ +Tiempo</button>
+            </div>
+            <div id="searchBar" class="search-bar">
+                <input type="text" id="searchInput" placeholder="🔍 Buscar elementos...">
+            </div>
+            <div id="consoleLog">
+                <div style="padding:40px; text-align:center; color:#999">Escanea la página o activa el Auto-Escaneo.
+                </div>
+            </div>
+        </div>
+        <div id="viewChat">
+            <div id="chatBox"></div>
+            <div class="chat-input-area">
+                <input type="text" id="chatInput" placeholder="Preguntar a la IA...">
+                <button id="btnSend">🚀</button>
+            </div>
+        </div>
+        <div id="viewJourneys">
+            <div id="journeysList">
+                <div class="journey-empty">No hay secuencias guardadas.</div>
+            </div>
+        </div>
+
+        <div id="viewTexts">
+            <div class="texts-toolbar">
+                <button id="btnNewText">+ Nuevo texto</button>
+            </div>
+            <div id="textEditorPanel" style="display:none;">
+                <input type="text" id="textNameInput" placeholder="Nombre del texto (ej: Script intro)">
+                <textarea id="textContentInput" placeholder="Escribe o pega el contenido aquí..."></textarea>
+                <div class="text-editor-actions">
+                    <button id="btnSaveText">💾 Guardar</button>
+                    <button id="btnCancelText">Cancelar</button>
+                </div>
+            </div>
+            <div id="textsList">
+                <div class="journey-empty">No hay textos guardados.</div>
+            </div>
+        </div>
+        <div id="textPickerPanel" style="display:none;">
+            <div class="text-picker-header">
+                <span>Seleccionar texto a insertar</span>
+                <button id="btnCloseTextPicker">✕</button>
+            </div>
+            <div id="textPickerList"></div>
+        </div>
+
+        <div id="keyPickerPanel" style="display:none;">
+            <div class="key-picker-header">
+                <span>Seleccionar tecla a simular</span>
+                <button id="btnCloseKeyPicker">✕</button>
+            </div>
+            <div id="keyPickerList"></div>
+        </div>
+    </div>
+
+    <div class="playback-overlay" id="playbackOverlay">
+        ▶ Reproduciendo: <span class="step-label" id="playbackStepLabel">...</span>
+        <button id="btnStopPlayback">⏹ Detener</button>
+    </div>
+    <script type="module" src="./sidepanel.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "clusiv-automation-web",
+  "private": true,
+  "version": "4.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/build.mjs --mode development",
+    "build": "node scripts/build.mjs --mode production"
+  },
+  "devDependencies": {
+    "vite": "^6.3.0"
+  }
+}

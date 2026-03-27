@@ -28,9 +28,20 @@ export function generateBestSelector(el) {
 
     let selector = el.tagName.toLowerCase();
     if (el.classList.length > 0) {
-        const firstClass = el.classList[0];
-        if (!firstClass.includes(':')) {
-            selector += `.${firstClass}`;
+        const stableClass = Array.from(el.classList).find(
+            (className) => /^[a-zA-Z][a-zA-Z0-9_-]{1,}$/.test(className) && !/^(ng-|css-|jsx-|sc-|mat-mdc|hover:|focus:|active:)/.test(className)
+        );
+        if (stableClass) {
+            selector += `.${stableClass}`;
+        }
+    }
+
+    if (el.parentElement) {
+        const siblings = Array.from(el.parentElement.children).filter(
+            (sibling) => sibling.tagName === el.tagName
+        );
+        if (siblings.length > 1) {
+            selector += `:nth-of-type(${siblings.indexOf(el) + 1})`;
         }
     }
 

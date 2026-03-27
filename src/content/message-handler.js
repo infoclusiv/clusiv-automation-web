@@ -56,7 +56,8 @@ export function registerContentMessageHandlers() {
                 keyCode: request.keyCode,
                 ctrlKey: request.ctrlKey || false,
                 shiftKey: request.shiftKey || false,
-                altKey: request.altKey || false
+                altKey: request.altKey || false,
+                targetSelector: request.targetSelector || null
             }));
         }
 

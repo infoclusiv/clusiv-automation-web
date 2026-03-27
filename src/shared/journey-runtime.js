@@ -268,6 +268,9 @@
             }
 
             if (step.stepType === 'key_press') {
+                const focusDelayMs = typeof step.focusDelayMs === 'number' ? step.focusDelayMs : 200;
+                await wait(focusDelayMs);
+
                 try {
                     await sendToTab({
                         action: 'SIMULATE_KEY',
@@ -276,14 +279,15 @@
                         keyCode: step.keyCode,
                         ctrlKey: step.ctrlKey || false,
                         shiftKey: step.shiftKey || false,
-                        altKey: step.altKey || false
-                    }, step, i);
+                        altKey: step.altKey || false,
+                        targetSelector: step.targetSelector || null
+                    });
                 } catch (error) {
                     return {
                         status: 'error',
                         stepIndex: i,
                         step,
-                        message: `Fallo de conexion al simular tecla en paso ${i + 1}.`,
+                        message: `Fallo de conexion al simular tecla [${step.label || step.key}] en paso ${i + 1}.`,
                         cause: error
                     };
                 }
@@ -300,7 +304,7 @@
                     const response = await sendToTab({
                         action: 'PASTE_TEXT',
                         text: step.text || ''
-                    }, step, i);
+                    });
 
                     if (!response || response.status !== 'pasted') {
                         return {
@@ -334,7 +338,7 @@
                     selector: step.selector,
                     text: step.text,
                     locator: step.locator || null
-                }, step, i);
+                });
 
                 if (response && response.status === 'not_found') {
                     return {
@@ -365,7 +369,7 @@
                 const response = await sendToTab({
                     action: 'PASTE_TEXT',
                     text: plan.finalText
-                }, { stepType: 'final_text', text: plan.finalText }, plan.steps.length);
+                });
 
                 if (!response || response.status !== 'pasted') {
                     return {

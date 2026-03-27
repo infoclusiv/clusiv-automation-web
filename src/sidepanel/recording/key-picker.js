@@ -32,11 +32,14 @@ export const KEY_GROUPS = [
         keys: [
             { label: 'Ctrl+A', key: 'a', code: 'KeyA', keyCode: 65, ctrlKey: true },
             { label: 'Ctrl+C', key: 'c', code: 'KeyC', keyCode: 67, ctrlKey: true },
+            { label: 'Ctrl+X', key: 'x', code: 'KeyX', keyCode: 88, ctrlKey: true },
             { label: 'Ctrl+V', key: 'v', code: 'KeyV', keyCode: 86, ctrlKey: true },
             { label: 'Ctrl+Z', key: 'z', code: 'KeyZ', keyCode: 90, ctrlKey: true },
+            { label: 'Ctrl+Y', key: 'y', code: 'KeyY', keyCode: 89, ctrlKey: true },
             { label: 'Ctrl+Enter', key: 'Enter', code: 'Enter', keyCode: 13, ctrlKey: true },
             { label: 'Shift+Enter', key: 'Enter', code: 'Enter', keyCode: 13, shiftKey: true },
-            { label: 'Shift+Tab', key: 'Tab', code: 'Tab', keyCode: 9, shiftKey: true }
+            { label: 'Shift+Tab', key: 'Tab', code: 'Tab', keyCode: 9, shiftKey: true },
+            { label: 'Ctrl+Shift+Enter', key: 'Enter', code: 'Enter', keyCode: 13, ctrlKey: true, shiftKey: true }
         ]
     },
     {
